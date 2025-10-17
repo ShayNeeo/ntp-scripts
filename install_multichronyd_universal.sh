@@ -224,7 +224,7 @@ fi
 
 # 12. Final Verification
 print_action "Waiting a few seconds for sync..."
-sleep 30
+sleep 60
 print_info "Final Sync Status (chronyc tracking):"
 chronyc -h /var/run/chrony/chronyd-client.sock tracking | tee -a "$LOG_FILE"
 print_info "Active Time Sources (chronyc sources):"
