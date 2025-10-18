@@ -20,25 +20,23 @@ print_action() { echo -e "${CYAN}${SYNC_EMOJI} $1...${RESET}" | tee -a "$LOG_FIL
 STRATUM_1_SERVERS=(
     # --- Top Tier Global Anycast Providers ---
     "time.google.com"
-    "time.cloudflare.com"
     "time.facebook.com"
     "time.apple.com"
-    "time.aws.com"
-    "time.windows.com"
     "ntp.se"                  # Netnod (Anycast)
 
     # --- National Time Authorities (Geographically Diverse) ---
     "ntp.nict.jp"             # NICT (Japan) - Excellent for Asia
-    "ntp.ntsc.ac.cn"          # NTSC (China) - Excellent for Asia
-    "stdtime.gov.hk"          # Hong Kong Time Standard
     "time.nplindia.org"       # NPL (India)
-    "time-a-g.nist.gov"       # NIST (USA)
+    "time.nist.gov"           # NIST (USA)
     "tick.usno.navy.mil"      # US Naval Observatory
+    "tock.usask.ca"
     "ptbtime1.ptb.de"         # PTB (Germany)
 
     # --- Highly Reliable Infrastructure & Academic Servers ---
+    "clock.nyc.he.net"        # Hurricane Electric (USA, East Coast)
     "clock.sjc.he.net"        # Hurricane Electric (USA, West Coast)
-    "ntp1.caltech.edu"        # Caltech (USA)
+    "clock.fmt.he.net"        # Hurricane Electric (USA, East Coast)
+    "vega.cbk.poznan.pl"      # CBK (Poland)
 )
 
 # --- Script Start ---
