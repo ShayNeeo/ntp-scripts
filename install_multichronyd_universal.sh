@@ -29,14 +29,19 @@ STRATUM_1_SERVERS=(
     "time.nplindia.org"       # NPL (India)
     "time.nist.gov"           # NIST (USA)
     "tick.usno.navy.mil"      # US Naval Observatory
-    "tock.usask.ca"
+    "tick.usask.ca"           # USASK (Canada)
+#    "tock.usask.ca"           # USASK (Canada)
     "ptbtime1.ptb.de"         # PTB (Germany)
 
     # --- Highly Reliable Infrastructure & Academic Servers ---
-    "clock.nyc.he.net"        # Hurricane Electric (USA, East Coast)
-    "clock.sjc.he.net"        # Hurricane Electric (USA, West Coast)
     "clock.fmt.he.net"        # Hurricane Electric (USA, East Coast)
+    "ntp1.leontp.com"         # LEON-TP (France)
     "vega.cbk.poznan.pl"      # CBK (Poland)
+    "ntp.bsn.go.id"           # BSN (Indonesia)
+    "time1.nimt.or.th"        # NIMT (Thailand)
+#    "time2.nimt.or.th"        # NIMT (Thailand)
+#    "time3.nimt.or.th"        # NIMT (Thailand)
+    "time.hko.hk"             # HK Observatory (Hong Kong)
 )
 
 # --- Script Start ---
