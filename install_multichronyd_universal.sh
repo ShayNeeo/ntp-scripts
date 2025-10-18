@@ -138,9 +138,9 @@ cat << EOF > "$CHRONY_CONF"
 # This file is managed by the multichrony setup script.
 $(for server in "${STRATUM_1_SERVERS[@]}"; do echo "server $server iburst"; done)
 driftfile /var/lib/chrony/chrony.drift
+allow
 makestep 1.0 3
 rtcsync
-allow
 logdir /var/log/chrony
 EOF
 print_success "Main configuration file created."
@@ -208,23 +208,8 @@ if ! systemctl is-active --quiet multichronyd; then
 fi
 print_success "Multi-instance chrony service is now active."
 
-# 11. Configure Local Network Access
-print_action "Detecting local subnets to configure server access"
-SUBNETS=($(ip -o -f inet addr show | awk '/scope global/ {print $4}' | grep -v '127.0.0.1'))
-if [ ${#SUBNETS[@]} -gt 0 ]; then
-    print_info "Detected local subnets: ${SUBNETS[*]}"
-    for SUBNET in "${SUBNETS[@]}"; do
-        echo "allow $SUBNET" >> "$CHRONY_CONF"
-    done
-    print_action "Restarting service to apply local network access rules"
-    systemctl restart multichronyd.service &>>"$LOG_FILE"
-    print_success "Service restarted with new rules."
-else
-    print_info "No external local subnets detected. Running in client-only mode."
-fi
-
-# 12. Final Verification
-print_action "Waiting a few seconds for sync..."
+# 11. Final Verification
+print_action "Waiting for initial sync..."
 sleep 60
 print_info "Final Sync Status (chronyc tracking):"
 chronyc -h /var/run/chrony/chronyd-client.sock tracking | tee -a "$LOG_FILE"
