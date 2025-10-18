@@ -28,7 +28,8 @@ STRATUM_1_SERVERS=(
     "ntp.nict.jp"             # NICT (Japan) - Excellent for Asia
     "time.nplindia.org"       # NPL (India)
     "time.nist.gov"           # NIST (USA)
-    "tick.usno.navy.mil"      # US Naval Observatory
+#    "tick.usno.navy.mil"      # US Naval Observatory
+#    "tock.usno.navy.mil"      # US Naval Observatory
     "tick.usask.ca"           # USASK (Canada)
 #    "tock.usask.ca"           # USASK (Canada)
     "ptbtime1.ptb.de"         # PTB (Germany)
