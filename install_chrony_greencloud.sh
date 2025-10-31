@@ -162,7 +162,7 @@ if [ -x "/usr/sbin/chronyd" ]; then
 elif [ -x "/usr/bin/chronyd" ]; then
     chronyd="/usr/bin/chronyd"
 elif command -v chronyd >/dev/null 2>&1; then
-    chronyd=$(command -v chronyd)
+    chronyd=\$(command -v chronyd)
 else
     echo "Error: chronyd not found"
     exit 1
@@ -171,13 +171,13 @@ fi
 trap terminate SIGINT SIGTERM
 terminate() {
   for p in /var/run/chrony/chronyd*.pid; do
-    pid=$(cat "$p" 2>/dev/null) && [[ "$pid" =~ [0-9]+ ]] && kill "$pid" 2>/dev/null
+    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
   done
   wait 2>/dev/null
 }
 
 conf="/etc/chrony/chrony.conf"
-case "$("${chronyd}" --version | grep -o -E '[1-9]\.[0-9]+')" in
+case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
   1.*|2.*|3.*) echo "chrony version too old"; exit 1;;
   4.0) opts="";;
   4.1) opts="xleave copy";;
@@ -189,19 +189,19 @@ mkdir -p /var/run/chrony
 chmod 1777 /var/run/chrony
 
 # --- Launch Server Instances ---
-for i in $(seq 1 "$servers"); do
-  "${chronyd}" "$@" -n -x \
-    "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 $opts" \
-    "allow" "cmdport 0" \
-    "bindcmdaddress /var/run/chrony/chronyd-server$i.sock" \
-    "pidfile /var/run/chrony/chronyd-server$i.pid" &
+for i in \$(seq 1 "\$servers"); do
+  "\$chronyd" "\$@" -n \\
+    "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
+    "allow" "cmdport 0" \\
+    "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
+    "pidfile /var/run/chrony/chronyd-server\$i.pid" &
 done
 
 # --- Launch Client Instance ---
-"${chronyd}" "$@" -n \
-  "include $conf" \
-  "pidfile /var/run/chrony/chronyd-client.pid" \
-  "bindcmdaddress /var/run/chrony/chronyd-client.sock" \
+"\$chronyd" "\$@" -n \\
+  "include \$conf" \\
+  "pidfile /var/run/chrony/chronyd-client.pid" \\
+  "bindcmdaddress /var/run/chrony/chronyd-client.sock" \\
   "port 11123" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" "cmdport 0" &
 
 wait
