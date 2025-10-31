@@ -16,33 +16,25 @@ print_warning() { echo -e "${YELLOW}${SYNC_EMOJI} $1${RESET}" | tee -a "$LOG_FIL
 print_action() { echo -e "${CYAN}${SYNC_EMOJI} $1...${RESET}" | tee -a "$LOG_FILE"; }
 
 # --- THE COMPREHENSIVE STRATUM 1 NTP SERVER LIST (as of 2025) ---
-# Curated from all provided sources for maximum reliability and geographic performance.
 STRATUM_1_SERVERS=(
     # --- Top Tier Global Anycast Providers ---
     "time.google.com"
     "time.facebook.com"
     "time.apple.com"
-    "ntp.se"                  # Netnod (Anycast)
-
+    "ntp.se"
     # --- National Time Authorities (Geographically Diverse) ---
-    "ntp.nict.jp"             # NICT (Japan) - Excellent for Asia
-    "time.nplindia.org"       # NPL (India)
-    "time.nist.gov"           # NIST (USA)
-#    "tick.usno.navy.mil"      # US Naval Observatory
-#    "tock.usno.navy.mil"      # US Naval Observatory
-    "tick.usask.ca"           # USASK (Canada)
-#    "tock.usask.ca"           # USASK (Canada)
-    "ptbtime1.ptb.de"         # PTB (Germany)
-
+    "ntp.nict.jp"
+    "time.nplindia.org"
+    "time.nist.gov"
+    "tick.usask.ca"
+    "ptbtime1.ptb.de"
     # --- Highly Reliable Infrastructure & Academic Servers ---
-    "clock.fmt.he.net"        # Hurricane Electric (USA, East Coast)
-    "ntp1.leontp.com"         # LEON-TP (France)
-    "vega.cbk.poznan.pl"      # CBK (Poland)
-    "ntp.bsn.go.id"           # BSN (Indonesia)
-    "time1.nimt.or.th"        # NIMT (Thailand)
-#    "time2.nimt.or.th"        # NIMT (Thailand)
-#    "time3.nimt.or.th"        # NIMT (Thailand)
-    "time.hko.hk"             # HK Observatory (Hong Kong)
+    "clock.fmt.he.net"
+    "ntp1.leontp.com"
+    "vega.cbk.poznan.pl"
+    "ntp.bsn.go.id"
+    "time1.nimt.or.th"
+    "time.hko.hk"
 )
 
 # --- Script Start ---
@@ -119,7 +111,6 @@ if command -v ufw &>/dev/null; then
     print_success "UFW has been enabled."
 fi
 
-
 # 6. Interactive CPU Core Selection
 print_action "Configuring CPU core usage"
 TOTAL_CORES=$(nproc)
@@ -127,7 +118,7 @@ while true; do
     read -p "Enter the number of CPU cores to use (1-${TOTAL_CORES}, default: ${TOTAL_CORES}): " CPU_CORES
     CPU_CORES=${CPU_CORES:-$TOTAL_CORES}
     if [[ "$CPU_CORES" =~ ^[1-9][0-9]*$ ]] && [ "$CPU_CORES" -le "$TOTAL_CORES" ]; then
-        print_success "Using $CPU_CORES core(s) for chrony server instances."
+        print_success "Using $CPU_CORES core(s) for chrony *client* instances."
         break
     else
         print_error "Invalid input. Please enter a number between 1 and ${TOTAL_CORES}."
@@ -135,21 +126,36 @@ while true; do
 done
 
 # 7. Create the Main chrony.conf with Stratum 1 Sources
+# *** MODIFIED STEP 7 ***
+# This file will be 'included' by the main server.
+# It now contains all the public-facing settings.
 CHRONY_CONF="/etc/chrony/chrony.conf"
 mkdir -p "$(dirname "$CHRONY_CONF")"
-print_action "Creating main configuration at $CHRONY_CONF with comprehensive Stratum 1 servers"
+print_action "Creating main configuration at $CHRONY_CONF with public settings"
 cat << EOF > "$CHRONY_CONF"
 # This file is managed by the multichrony setup script.
+# It is 'included' by the main server instance.
+
+# --- Upstream Stratum 1 Servers ---
 $(for server in "${STRATUM_1_SERVERS[@]}"; do echo "server $server iburst"; done)
+
+# --- Basic Settings ---
 driftfile /var/lib/chrony/chrony.drift
-allow
 makestep 1.0 3
 rtcsync
 logdir /var/log/chrony
+log measurements statistics tracking
+
+# --- Public Server Settings ---
+allow 0/0
+local stratum 10
 EOF
 print_success "Main configuration file created."
 
 # 8. Create the multichronyd.sh Script
+# *** MODIFIED STEP 8 ***
+# This now correctly launches N clients and 1 main server
+# that listens on BOTH port 123 (public) and 11123 (internal).
 print_action "Generating the /root/multichronyd.sh script"
 cat << EOF > /root/multichronyd.sh
 #!/bin/bash
@@ -169,18 +175,29 @@ case "\$(\"\$chronyd\" --version | grep -o -E '[1-9]\.[0-9]+')" in
   *) opts="xleave copy extfield F323";;
 esac
 mkdir -p /var/run/chrony
+
+# --- These are the ${CPU_CORES} BENCHMARK CLIENTS ---
+# (Note: Your original script names them "server$i" which is confusing,
+# but we will keep that for consistency.)
 for i in \$(seq 1 "\$servers"); do
   "\$chronyd" "\$@" -n -x \\
+    "sched_priority 1" \\
     "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
     "allow" "cmdport 0" \\
     "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
     "pidfile /var/run/chrony/chronyd-server\$i.pid" &
 done
+
+# --- This is the 1 MAIN SERVER (Public + Benchmark) ---
+# (Note: Your original script names this "client" which is confusing,
+# but we will keep that for consistency.)
 "\$chronyd" "\$@" -n \\
   "include \$conf" \\
   "pidfile /var/run/chrony/chronyd-client.pid" \\
   "bindcmdaddress /var/run/chrony/chronyd-client.sock" \\
-  "port 11123" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" &
+  "port 123" \\
+  "port 11123" \\
+  "sched_priority 1" &
 wait
 EOF
 chmod +x /root/multichronyd.sh
@@ -213,17 +230,21 @@ fi
 print_success "Multi-instance chrony service is now active."
 
 # 11. Final Verification
-print_action "Waiting for initial sync..."
+print_action "Waiting 60 seconds for initial sync..."
 sleep 60
 print_info "Final Sync Status (chronyc tracking):"
+# *** MODIFIED STEP 11 ***
+# This command now correctly queries the main server instance
+# (which your script calls 'chronyd-client.sock')
 chronyc -h /var/run/chrony/chronyd-client.sock tracking | tee -a "$LOG_FILE"
 print_info "Active Time Sources (chronyc sources):"
 chronyc -h /var/run/chrony/chronyd-client.sock sources | tee -a "$LOG_FILE"
 
+# This check should now SUCCEED
 if ss -lupn | grep -q ":123"; then
     print_success "${SERVER_EMOJI} NTP service is up and listening on port 123."
 else
-    print_warning "NTP service is not listening on port 123. It may be in client-only mode or blocked."
+    print_warning "NTP service is NOT listening on port 123. Check service logs."
 fi
 
-print_info "Setup complete!"
+print_info "Setup complete! Log file is at $LOG_FILE"
