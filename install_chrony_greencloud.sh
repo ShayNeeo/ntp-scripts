@@ -155,7 +155,7 @@ print_action "Generating the /root/multichronyd.sh script"
 print_info "${LIMIT_EMOJI} Each process will be limited to 30% CPU."
 cat << SCRIPT > /root/multichronyd.sh
 #!/bin/bash
-servers=${CPU_CORES}
+clients=\${CPU_CORES}
 
 if [ -x "/usr/sbin/chronyd" ]; then
     chronyd="/usr/sbin/chronyd"
@@ -186,21 +186,17 @@ case "\$("\$chronyd" --version 2>/dev/null | grep -o -E '[0-9]+\.[0-9]+')" in
   *) opts="xleave copy extfield F323" ;;
 esac
 
-# --- Launch Server Instances ---
-for i in \$(seq 1 "\$servers"); do
-  printf 'server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 %s\nallow\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-server%d.sock\npidfile /var/run/chrony/chronyd-server%d.pid\n' "\$opts" "\$i" "\$i" | \\
-  "\$chronyd" -n -f - &
+# --- Launch Multiple Client Instances (each syncs with Stratum 1) ---
+for i in \$(seq 1 "\$clients"); do
+  printf 'include /etc/chrony/chrony.conf\nport 1123%d\nbindaddress 127.0.0.1\nsched_priority 1\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-client%d.sock\npidfile /var/run/chrony/chronyd-client%d.pid\n' "\$i" "\$i" "\$i" | "\$chronyd" -n -f - &
 done
 
-# --- Launch Client Instance ---
-"\$chronyd" -n -f /etc/chrony/chrony.conf \\
-  -x port 11123 \\
-  -x "bindaddress 127.0.0.1" \\
-  -x "sched_priority 1" \\
-  -x "allow 127.0.0.1" \\
-  -x "cmdport 0" \\
-  -x "bindcmdaddress /var/run/chrony/chronyd-client.sock" \\
-  -x "pidfile /var/run/chrony/chronyd-client.pid" &
+# --- Launch Server Instance (listens on port 123, pulls from all clients) ---
+printf 'allow\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-server.sock\npidfile /var/run/chrony/chronyd-server.pid\n' > /tmp/chrony-server.conf
+for i in \$(seq 1 "\$clients"); do
+  echo "server 127.0.0.1 port 1123\$i minpoll 0 maxpoll 0 \$opts" >> /tmp/chrony-server.conf
+done
+"\$chronyd" -n -f /tmp/chrony-server.conf &
 
 wait
 SCRIPT
@@ -210,7 +206,7 @@ print_success "Multi-instance script created and made executable."
 
 # 9. Create the systemd Service File
 print_action "Creating the multichronyd.service systemd file"
-CPU_QUOTA=$((($CPU_CORES + 1) * 30))
+CPU_QUOTA=$(($CPU_CORES * 30))
 cat << 'EOF' > /etc/systemd/system/multichronyd.service
 [Unit]
 Description=Multi-Instance Chronyd Service Manager
@@ -274,4 +270,4 @@ else
     print_warning "NTP service not detected on port 123. Check: systemctl status multichronyd.service"
 fi
 
-print_info "Setup complete! Each process limited to 30% CPU (Total: ${CPU_QUOTA}%)"
+print_info "Setup complete! 1 NTP server + ${CPU_CORES} client instances. Clients limited to 30% each (Total: ${CPU_QUOTA}%). Server unlimited."
