@@ -147,12 +147,13 @@ print_success "Main configuration file created."
 print_action "Setting up /var/run/chrony directory"
 mkdir -p /var/run/chrony
 # Try to find chronyd user/group, fallback to making it world-writable
+# Note: 777 is needed because chronyd with PRIVDROP checks permissions before dropping
 if id _chrony &>/dev/null 2>&1; then
     chown _chrony:_chrony /var/run/chrony
-    chmod 755 /var/run/chrony
+    chmod 777 /var/run/chrony  # World writable for systemd-run compatibility
 elif id chrony &>/dev/null 2>&1; then
     chown chrony:chrony /var/run/chrony
-    chmod 755 /var/run/chrony
+    chmod 777 /var/run/chrony  # World writable for systemd-run compatibility
 else
     # If no chronyd user exists, make it world-writable for socket creation
     chmod 1777 /var/run/chrony  # Sticky bit + world writable
@@ -199,14 +200,15 @@ case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
 esac
 
 # Create directory with proper permissions before starting processes
-# chronyd with PRIVDROP needs directory owned by chronyd user or world-writable
+# chronyd with PRIVDROP needs directory writable by chronyd user/group
+# Note: 777 is needed because chronyd checks permissions before dropping privileges
 mkdir -p /var/run/chrony
 if id _chrony &>/dev/null 2>&1; then
     chown _chrony:_chrony /var/run/chrony
-    chmod 755 /var/run/chrony
+    chmod 777 /var/run/chrony  # World writable for systemd-run compatibility
 elif id chrony &>/dev/null 2>&1; then
     chown chrony:chrony /var/run/chrony
-    chmod 755 /var/run/chrony
+    chmod 777 /var/run/chrony  # World writable for systemd-run compatibility
 else
     # Fallback: world-writable for socket creation
     chmod 1777 /var/run/chrony
@@ -272,7 +274,7 @@ print_success "Multi-instance chrony service is now active."
 
 # 11. Final Verification
 print_action "Waiting for initial sync..."
-sleep 60
+sleep 10
 
 # Try to connect to chrony instances for status
 # Check which sockets are available (with retry for systemd-run delays)
