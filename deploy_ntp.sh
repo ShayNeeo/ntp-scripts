@@ -213,6 +213,7 @@ for i in $(seq 1 "$servers"); do
 		"include $conf" \
 		"port 123" \
 		"allow 0/0" \
+		"allow ::/0" \
 		"sched_priority 1" \
 		"local stratum 10" \
 		"cmdport 0" \
