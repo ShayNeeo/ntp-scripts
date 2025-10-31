@@ -40,23 +40,24 @@ echo "### Step 4: Configuring Chrony... ###"
 # The chrony.conf part remains the same
 cat << 'EOF' > /etc/chrony/chrony.conf
 # ---- BEST PRACTICE UPDATE ----
-server time.cloudflare.com iburst
-server time.aws.com iburst
+# --- Top Tier Global Anycast Providers ---
 server time.google.com iburst
-server time.nist.gov iburst
 server time.facebook.com iburst
 server time.apple.com iburst
-server clock.sjc.he.net iburst
-server clock.fmt.he.net iburst
-server 1.ntp.vnix.vn iburst
-server 2.ntp.vnix.vn iburst
+server ntp.se iburst
+# --- National Time Authorities (Geographically Diverse) ---
 server ntp.nict.jp iburst
-server ntp.ntsc.ac.cn iburst
-server ntp.sgix.sg iburst
-server time.stdtime.gov.tw iburst
-server time.kriss.re.kr iburst
-server ntp.hko.hk iburst
-server ntp.aarnet.edu.au iburst
+server time.nplindia.org iburst
+server time.nist.gov iburst
+server tick.usask.ca iburst
+server ptbtime1.ptb.de iburst
+# --- Highly Reliable Infrastructure & Academic Servers ---
+server clock.fmt.he.net iburst
+server ntp1.leontp.com iburst
+server vega.cbk.poznan.pl iburst
+server ntp.bsn.go.id iburst
+server time1.nimt.or.th iburst
+server time.hko.hk iburst
 allow
 sourcedir /run/chrony-dhcp
 sourcedir /etc/chrony/sources.d
