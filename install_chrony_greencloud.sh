@@ -146,8 +146,18 @@ print_success "Main configuration file created."
 # 7.5. Ensure /var/run/chrony directory exists with proper permissions
 print_action "Setting up /var/run/chrony directory"
 mkdir -p /var/run/chrony
-chmod 1777 /var/run/chrony  # Sticky bit + world writable for socket creation under systemd-run
-chown root:root /var/run/chrony
+# Try to find chronyd user/group, fallback to making it world-writable
+if id _chrony &>/dev/null 2>&1; then
+    chown _chrony:_chrony /var/run/chrony
+    chmod 755 /var/run/chrony
+elif id chrony &>/dev/null 2>&1; then
+    chown chrony:chrony /var/run/chrony
+    chmod 755 /var/run/chrony
+else
+    # If no chronyd user exists, make it world-writable for socket creation
+    chmod 1777 /var/run/chrony  # Sticky bit + world writable
+    chown root:root /var/run/chrony
+fi
 print_success "Directory /var/run/chrony is ready."
 
 # 8. Create the multichronyd.sh Script (*** MODIFIED FOR CPU LIMITING ***)
@@ -189,10 +199,19 @@ case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
 esac
 
 # Create directory with proper permissions before starting processes
-# Note: systemd-run may require more permissive directory for socket creation
+# chronyd with PRIVDROP needs directory owned by chronyd user or world-writable
 mkdir -p /var/run/chrony
-chmod 1777 /var/run/chrony  # Sticky bit + world writable for socket creation
-chown root:root /var/run/chrony
+if id _chrony &>/dev/null 2>&1; then
+    chown _chrony:_chrony /var/run/chrony
+    chmod 755 /var/run/chrony
+elif id chrony &>/dev/null 2>&1; then
+    chown chrony:chrony /var/run/chrony
+    chmod 755 /var/run/chrony
+else
+    # Fallback: world-writable for socket creation
+    chmod 1777 /var/run/chrony
+    chown root:root /var/run/chrony
+fi
 
 # --- Launch Server Instances with CPU Limit ---
 # Server instances: listen on port 123 (default) for public access with 'allow'
