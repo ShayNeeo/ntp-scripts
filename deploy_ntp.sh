@@ -271,10 +271,10 @@ print_action "Waiting 10 seconds for time sync..."
 sleep 10
 
 print_info "Checking first instance status:"
-chronyc sources | tee -a "$LOG_FILE"
+chronyc sources 2>/dev/null | tee -a "$LOG_FILE"
 
 print_info "Active time sources:"
-chronyc tracking | tee -a "$LOG_FILE"
+chronyc tracking 2>/dev/null | tee -a "$LOG_FILE"
 
 print_info "Number of listening NTP instances:"
 ss -lupn 2>/dev/null | grep -c ":123 " || echo "0"
