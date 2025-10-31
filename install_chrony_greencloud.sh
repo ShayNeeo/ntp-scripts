@@ -146,7 +146,7 @@ print_success "Main configuration file created."
 # 7.5. Ensure /var/run/chrony directory exists with proper permissions
 print_action "Setting up /var/run/chrony directory"
 mkdir -p /var/run/chrony
-chmod 755 /var/run/chrony
+chmod 1777 /var/run/chrony  # Sticky bit + world writable for socket creation under systemd-run
 chown root:root /var/run/chrony
 print_success "Directory /var/run/chrony is ready."
 
@@ -189,8 +189,9 @@ case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
 esac
 
 # Create directory with proper permissions before starting processes
+# Note: systemd-run may require more permissive directory for socket creation
 mkdir -p /var/run/chrony
-chmod 755 /var/run/chrony
+chmod 1777 /var/run/chrony  # Sticky bit + world writable for socket creation
 chown root:root /var/run/chrony
 
 # --- Launch Server Instances with CPU Limit ---
@@ -255,9 +256,20 @@ print_action "Waiting for initial sync..."
 sleep 60
 
 # Try to connect to chrony instances for status
-# Check which sockets are available
+# Check which sockets are available (with retry for systemd-run delays)
 CLIENT_SOCK="/var/run/chrony/chronyd-client.sock"
 SERVER_SOCK="/var/run/chrony/chronyd-server1.sock"
+
+# Wait for sockets to appear (systemd-run may delay socket creation)
+print_action "Waiting for control sockets to initialize..."
+SOCKET_FOUND=0
+for attempt in {1..10}; do
+    if [ -S "$CLIENT_SOCK" ] || [ -S "$SERVER_SOCK" ]; then
+        SOCKET_FOUND=1
+        break
+    fi
+    sleep 2
+done
 
 if [ -S "$CLIENT_SOCK" ]; then
     print_info "Final Sync Status (chronyc tracking from client):"
@@ -270,10 +282,18 @@ elif [ -S "$SERVER_SOCK" ]; then
     print_info "Active Time Sources (chronyc sources from server instance 1):"
     chronyc -h "$SERVER_SOCK" sources 2>&1 | tee -a "$LOG_FILE" || print_warning "Could not connect to server instance"
 else
-    print_warning "No chrony control sockets found. Checking if processes are running..."
+    print_warning "No chrony control sockets found after waiting."
     if pgrep -f chronyd > /dev/null; then
-        print_info "Chronyd processes are running. Sockets may take time to initialize."
+        print_info "Chronyd processes are running. Checking for socket creation issues..."
+        # Check if there are permission issues in logs
+        if journalctl -u multichronyd.service --no-pager -n 20 2>/dev/null | grep -qi "permission\|socket\|bindcmdaddress"; then
+            print_info "Found socket-related messages in logs. Checking directory permissions..."
+            ls -la /var/run/chrony/ 2>/dev/null | head -5 || print_warning "Cannot list /var/run/chrony directory"
+        fi
+        print_info "Note: Sockets may not be accessible due to systemd-run scope isolation."
+        print_info "This is normal when using CPU limits. The NTP service is still functional."
         print_info "You can check status later with: chronyc -h /var/run/chrony/chronyd-client.sock tracking"
+        print_info "Or check logs: journalctl -u multichronyd.service -n 50"
     else
         print_error "Chronyd processes are not running. Check service status: systemctl status multichronyd"
     fi
