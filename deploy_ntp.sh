@@ -164,6 +164,11 @@ print_success "Chrony configuration created"
 print_header "DEPLOYING MULTICHRONY - SO_REUSEPORT (${TOTAL_CORES} instances)"
 print_action "Creating /root/multichronyd.sh launcher"
 
+# Fix permissions for /var/run/chrony
+mkdir -p /var/run/chrony
+chmod 755 /var/run/chrony
+chown root:root /var/run/chrony
+
 cat > /root/multichronyd.sh << 'LAUNCHER'
 #!/bin/bash
 
