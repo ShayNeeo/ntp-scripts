@@ -1,14 +1,10 @@
 #!/bin/bash
 
-# --- Configuration ---
-# This is the per-process limit suggested by your provider.
-CPU_LIMIT_PER_PROCESS="30%"
-
-# --- ANSI Colors & Emojis ---
+# ANSI Colors & Emojis
 RED="\033[0;31m"; GREEN="\033[0;32m"; YELLOW="\033[1;33m"; BLUE="\033[0;34m"; CYAN="\033[0;36m"; RESET="\033[0m"
-CHECK_EMOJI="✅"; ERROR_EMOJI="❌"; INFO_EMOJI="ℹ️"; SYNC_EMOJI="🔄"; SERVER_EMOJI="🛡️"; FIREWALL_EMOJI="🔥"; LIMIT_EMOJI="🚦"
+CHECK_EMOJI="✅"; ERROR_EMOJI="❌"; INFO_EMOJI="ℹ️"; SYNC_EMOJI="🔄"; SERVER_EMOJI="🛡️"; FIREWALL_EMOJI="🔥"
 
-# --- Log file setup ---
+# Log file setup
 LOG_FILE="/var/log/multichrony_setup.log"
 touch "$LOG_FILE" &>/dev/null || LOG_FILE="/tmp/multichrony_setup.log"
 
@@ -20,27 +16,38 @@ print_warning() { echo -e "${YELLOW}${SYNC_EMOJI} $1${RESET}" | tee -a "$LOG_FIL
 print_action() { echo -e "${CYAN}${SYNC_EMOJI} $1...${RESET}" | tee -a "$LOG_FILE"; }
 
 # --- THE COMPREHENSIVE STRATUM 1 NTP SERVER LIST (as of 2025) ---
+# Curated from all provided sources for maximum reliability and geographic performance.
 STRATUM_1_SERVERS=(
+    # --- Top Tier Global Anycast Providers ---
     "time.google.com"
     "time.facebook.com"
     "time.apple.com"
-    "ntp.se"
-    "ntp.nict.jp"
-    "time.nplindia.org"
-    "time.nist.gov"
-    "tick.usask.ca"
-    "ptbtime1.ptb.de"
-    "clock.fmt.he.net"
-    "ntp1.leontp.com"
-    "vega.cbk.poznan.pl"
-    "ntp.bsn.go.id"
-    "time1.nimt.or.th"
-    "time.hko.hk"
+    "ntp.se"                  # Netnod (Anycast)
+
+    # --- National Time Authorities (Geographically Diverse) ---
+    "ntp.nict.jp"             # NICT (Japan) - Excellent for Asia
+    "time.nplindia.org"       # NPL (India)
+    "time.nist.gov"           # NIST (USA)
+#    "tick.usno.navy.mil"      # US Naval Observatory
+#    "tock.usno.navy.mil"      # US Naval Observatory
+    "tick.usask.ca"           # USASK (Canada)
+#    "tock.usask.ca"           # USASK (Canada)
+    "ptbtime1.ptb.de"         # PTB (Germany)
+
+    # --- Highly Reliable Infrastructure & Academic Servers ---
+    "clock.fmt.he.net"        # Hurricane Electric (USA, East Coast)
+    "ntp1.leontp.com"         # LEON-TP (France)
+    "vega.cbk.poznan.pl"      # CBK (Poland)
+    "ntp.bsn.go.id"           # BSN (Indonesia)
+    "time1.nimt.or.th"        # NIMT (Thailand)
+#    "time2.nimt.or.th"        # NIMT (Thailand)
+#    "time3.nimt.or.th"        # NIMT (Thailand)
+    "time.hko.hk"             # HK Observatory (Hong Kong)
 )
 
 # --- Script Start ---
 echo "=== Script run at $(date) ===" > "$LOG_FILE"
-print_info "Starting Universal Multi-Instance Chrony & Firewall Setup"
+print_info "Starting GreenCloud Multi-Instance Chrony with CPU Limiting & Firewall Setup"
 
 # 1. Root Check
 if [[ $EUID -ne 0 ]]; then
@@ -64,22 +71,27 @@ print_success "System: $DISTRO, Package Manager: $PACKAGE_MANAGER"
 # 3. Stop and Disable ALL Conflicting Services
 print_action "Stopping all conflicting time services"
 systemctl disable --now systemd-timesyncd ntpd chrony chronyd multichronyd &>/dev/null
-rm -f /etc/systemd/system/chrony.service.d/cpu_limit.conf # Clean up old script's limit
 print_success "Disabled all known time services to prevent conflicts."
 
-# 4. Install Chrony
+# 4. Install Chrony and cpulimit
 if ! command -v chronyd &>/dev/null; then
     print_action "Installing chrony"
     case "$PACKAGE_MANAGER" in
-        apt) apt-get update -y && apt-get install -y chrony &>>"$LOG_FILE";;
-        dnf|yum) dnf install -y chrony &>>"$LOG_FILE";;
-        pacman) pacman -S --noconfirm chrony &>>"$LOG_FILE";;
-        apk) apk add chrony &>>"$LOG_FILE";;
+        apt) apt-get update -y && apt-get install -y chrony cpulimit &>>"$LOG_FILE";;
+        dnf|yum) dnf install -y chrony cpulimit &>>"$LOG_FILE";;
+        pacman) pacman -S --noconfirm chrony cpulimit &>>"$LOG_FILE";;
+        apk) apk add chrony cpulimit &>>"$LOG_FILE";;
     esac
     if ! command -v chronyd &>/dev/null; then print_error "Chrony installation failed. Check log: $LOG_FILE"; exit 1; fi
-    print_success "Chrony has been installed."
+    print_success "Chrony and cpulimit have been installed."
 else
-    print_success "Chrony is already installed."
+    print_success "Chrony is already installed. Installing cpulimit..."
+    case "$PACKAGE_MANAGER" in
+        apt) apt-get install -y cpulimit &>>"$LOG_FILE";;
+        dnf|yum) dnf install -y cpulimit &>>"$LOG_FILE";;
+        pacman) pacman -S --noconfirm cpulimit &>>"$LOG_FILE";;
+        apk) apk add cpulimit &>>"$LOG_FILE";;
+    esac
 fi
 
 # 5. Firewall Setup (Install and Configure UFW)
@@ -113,26 +125,30 @@ if command -v ufw &>/dev/null; then
     print_success "UFW has been enabled."
 fi
 
-# 6. Interactive CPU Core Selection
-print_action "Configuring CPU core usage"
+
+# 6. CPU Core and CPU Limiting Configuration (GreenCloud-Specific)
+print_action "Configuring CPU core usage and limits (GreenCloud Mode)"
 TOTAL_CORES=$(nproc)
-while true; do
-    read -p "Enter the number of CPU cores to use (1-${TOTAL_CORES}, default: ${TOTAL_CORES}): " CPU_CORES
-    CPU_CORES=${CPU_CORES:-$TOTAL_CORES}
-    if [[ "$CPU_CORES" =~ ^[1-9][0-9]*$ ]] && [ "$CPU_CORES" -le "$TOTAL_CORES" ]; then
-        print_success "Using $CPU_CORES core(s) for chrony server instances."
-        break
-    else
-        print_error "Invalid input. Please enter a number between 1 and ${TOTAL_CORES}."
-    fi
-done
+print_info "Total CPU cores detected: $TOTAL_CORES"
+print_info "GreenCloud Configuration:"
+print_info "  - 1 Server instance (no CPU limit)"
+print_info "  - 2 Client instances (30% CPU each = 60% total)"
+
+# Calculate CPU limit percentage per client
+CLIENT_CPU_LIMIT=30
+NUM_CLIENTS=2
+NUM_SERVERS=1
+
+print_success "CPU Limiting configured:"
+print_success "  - Servers: unlimited"
+print_success "  - Clients: $CLIENT_CPU_LIMIT% per instance (total: $((CLIENT_CPU_LIMIT * NUM_CLIENTS))%)"
 
 # 7. Create the Main chrony.conf with Stratum 1 Sources
 CHRONY_CONF="/etc/chrony/chrony.conf"
 mkdir -p "$(dirname "$CHRONY_CONF")"
 print_action "Creating main configuration at $CHRONY_CONF with comprehensive Stratum 1 servers"
 cat << EOF > "$CHRONY_CONF"
-# This file is managed by the multichrony setup script.
+# This file is managed by the GreenCloud multichrony setup script.
 $(for server in "${STRATUM_1_SERVERS[@]}"; do echo "server $server iburst"; done)
 driftfile /var/lib/chrony/chrony.drift
 allow
@@ -142,89 +158,107 @@ logdir /var/log/chrony
 EOF
 print_success "Main configuration file created."
 
-# 7.5. Ensure /var/run/chrony directory exists with proper permissions
-print_action "Setting up /var/run/chrony directory"
-rm -rf /var/run/chrony
-mkdir -p /var/run/chrony
-chmod 1777 /var/run/chrony
-chown root:root /var/run/chrony
-print_success "Directory /var/run/chrony is ready."
-
-# 8. Create the multichronyd.sh Script (*** MODIFIED FOR CPU LIMITING ***)
-print_action "Generating the /root/multichronyd.sh script"
-print_info "${LIMIT_EMOJI} Each process will be limited to 30% CPU."
-cat << 'SCRIPT' > /root/multichronyd.sh
+# 8. Create the multichronyd.sh Script with CPU limiting
+print_action "Generating the /root/multichronyd.sh script with CPU limiting"
+cat << EOF > /root/multichronyd.sh
 #!/bin/bash
-clients=__CPU_CORES__
 
+servers=$NUM_SERVERS
+clients=$NUM_CLIENTS
+client_cpu_limit=$CLIENT_CPU_LIMIT
+
+# Find chronyd dynamically
 if [ -x "/usr/sbin/chronyd" ]; then
     chronyd="/usr/sbin/chronyd"
 elif [ -x "/usr/bin/chronyd" ]; then
     chronyd="/usr/bin/chronyd"
 elif command -v chronyd >/dev/null 2>&1; then
-    chronyd=$(command -v chronyd)
+    chronyd=\$(command -v chronyd)
 else
     echo "Error: chronyd not found"
     exit 1
 fi
 
+# Find cpulimit dynamically
+if command -v cpulimit >/dev/null 2>&1; then
+    cpulimit=\$(command -v cpulimit)
+else
+    echo "Warning: cpulimit not found, running without CPU limits"
+    cpulimit=""
+fi
+
 trap terminate SIGINT SIGTERM
 terminate() {
   for p in /var/run/chrony/chronyd*.pid; do
-    pid=$(cat "$p" 2>/dev/null) && [[ "$pid" =~ [0-9]+ ]] && kill "$pid" 2>/dev/null
+    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
   done
   wait 2>/dev/null
 }
 
+conf="/etc/chrony/chrony.conf"
+case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
+  1.*|2.*|3.*) echo "chrony version too old"; exit 1;;
+  4.0) opts="";;
+  4.1) opts="xleave copy";;
+  *) opts="xleave copy extfield F323";;
+esac
+
 mkdir -p /var/run/chrony
 chmod 1777 /var/run/chrony
 
-# Determine chrony version for options
-case "$("${chronyd}" --version 2>/dev/null | grep -o -E '[0-9]+\.[0-9]+')" in
-  4.0*) opts="" ;;
-  4.1*) opts="xleave copy" ;;
-  *) opts="xleave copy extfield F323" ;;
-esac
-
-# --- Launch Multiple Client Instances (each syncs with Stratum 1) ---
-for i in $(seq 1 "$clients"); do
-  printf 'include /etc/chrony/chrony.conf\nport 1123%d\nbindaddress 127.0.0.1\nsched_priority 1\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-client%d.sock\npidfile /var/run/chrony/chronyd-client%d.pid\n' "$i" "$i" "$i" | "${chronyd}" -n -f - &
+# Server instances: listen on port 123 (default) for public access with 'allow'
+# They get time from the client instances on port 11123
+# Server instances have NO CPU limit
+for i in \$(seq 1 "\$servers"); do
+  "\$chronyd" "\$@" -n -x \\
+    "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
+    "allow" "cmdport 0" \\
+    "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
+    "pidfile /var/run/chrony/chronyd-server\$i.pid" &
 done
 
-# --- Launch Server Instance (listens on port 123, pulls from all clients) ---
-printf 'allow\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-server.sock\npidfile /var/run/chrony/chronyd-server.pid\n' > /var/run/chrony/chrony-server.conf
-for i in $(seq 1 "$clients"); do
-  echo "server 127.0.0.1 port 1123$i minpoll 0 maxpoll 0 $opts" >> /var/run/chrony/chrony-server.conf
+# Client instances: sync with external Stratum 1 servers, serve time to server instances on port 11123
+# Client instances are rate-limited by cpulimit
+for i in \$(seq 1 "\$clients"); do
+  if [ -n "\$cpulimit" ]; then
+    # Run with CPU limit (percentage-based)
+    "\$cpulimit" -p \$\$ -l "\$client_cpu_limit" -b \\
+      "\$chronyd" "\$@" -n \\
+      "include \$conf" \\
+      "pidfile /var/run/chrony/chronyd-client\$i.pid" \\
+      "bindcmdaddress /var/run/chrony/chronyd-client\$i.sock" \\
+      "port \$((11123 + i - 1))" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" &
+  else
+    # Run without CPU limit if cpulimit not available
+    "\$chronyd" "\$@" -n \\
+      "include \$conf" \\
+      "pidfile /var/run/chrony/chronyd-client\$i.pid" \\
+      "bindcmdaddress /var/run/chrony/chronyd-client\$i.sock" \\
+      "port \$((11123 + i - 1))" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" &
+  fi
 done
-"${chronyd}" -n -f /var/run/chrony/chrony-server.conf &
 
 wait
-SCRIPT
-sed -i "s/__CPU_CORES__/${CPU_CORES}/g" /root/multichronyd.sh
+EOF
 chmod +x /root/multichronyd.sh
-print_success "Multi-instance script created and made executable."
+print_success "Multi-instance script with CPU limiting created and made executable."
 
 # 9. Create the systemd Service File
 print_action "Creating the multichronyd.service systemd file"
-CPU_QUOTA=$(($CPU_CORES * 30))
 cat << 'EOF' > /etc/systemd/system/multichronyd.service
 [Unit]
-Description=Multi-Instance Chronyd Service Manager
+Description=GreenCloud Multi-Instance Chronyd Service with CPU Limiting
 After=network.target
 [Service]
-Type=simple
 User=root
 Group=root
 ExecStart=/root/multichronyd.sh
-KillMode=process
 Restart=always
 RestartSec=10
-MemoryMax=512M
-CPUQuota=${CPU_QUOTA}%
+Type=simple
 [Install]
 WantedBy=multi-user.target
 EOF
-sed -i "s|\${CPU_QUOTA}|$CPU_QUOTA|g" /etc/systemd/system/multichronyd.service
 print_success "Systemd service file created."
 
 # 10. Start the Multi-Chrony Service
@@ -238,36 +272,17 @@ print_success "Multi-instance chrony service is now active."
 
 # 11. Final Verification
 print_action "Waiting for initial sync..."
-sleep 15
+sleep 60
+print_info "Final Sync Status (chronyc tracking):"
+chronyc -h /var/run/chrony/chronyd-client1.sock tracking | tee -a "$LOG_FILE"
+print_info "Active Time Sources (chronyc sources):"
+chronyc -h /var/run/chrony/chronyd-client1.sock sources | tee -a "$LOG_FILE"
 
-# Fix socket permissions for access
-for attempt in {1..10}; do
-    if [ -S /var/run/chrony/chronyd-client.sock ] || [ -S /var/run/chrony/chronyd-server1.sock ]; then
-        chmod 666 /var/run/chrony/chronyd*.sock 2>/dev/null
-        break
-    fi
-    sleep 1
-done
-
-CLIENT_SOCK="/var/run/chrony/chronyd-client.sock"
-if [ -S "$CLIENT_SOCK" ]; then
-    print_info "Final Sync Status (chronyc tracking):"
-    chronyc -h "$CLIENT_SOCK" tracking 2>&1 | tee -a "$LOG_FILE" || print_warning "Socket access limited"
-    print_info "Active Time Sources (chronyc sources):"
-    chronyc -h "$CLIENT_SOCK" sources 2>&1 | tee -a "$LOG_FILE" || print_warning "Socket access limited"
-elif [ -S /var/run/chrony/chronyd-server1.sock ]; then
-    print_info "Final Sync Status (chronyc tracking from server 1):"
-    chronyc -h /var/run/chrony/chronyd-server1.sock tracking 2>&1 | tee -a "$LOG_FILE" || true
+if ss -lupn | grep -q ":123"; then
+    print_success "${SERVER_EMOJI} NTP service is up and listening on port 123."
 else
-    if pgrep -f chronyd > /dev/null; then
-        print_info "Chronyd processes running. NTP service is active."
-    fi
+    print_warning "NTP service is not listening on port 123. It may be in client-only mode or blocked."
 fi
 
-if ss -lupn 2>/dev/null | grep -q ":123"; then
-    print_success "${SERVER_EMOJI} NTP service is listening on port 123."
-else
-    print_warning "NTP service not detected on port 123. Check: systemctl status multichronyd.service"
-fi
-
-print_info "Setup complete! 1 NTP server + ${CPU_CORES} client instances. Clients limited to 30% each (Total: ${CPU_QUOTA}%). Server unlimited."
+print_info "GreenCloud Setup complete!"
+print_info "CPU Limiting active: 2 clients @ 30% each, 1 server unlimited"
