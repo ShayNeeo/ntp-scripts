@@ -268,7 +268,7 @@ fi
 # 11. Verify
 print_header "VERIFICATION & STATUS"
 print_action "Waiting 60 seconds for time sync..."
-sleep 60
+sleep 10
 
 print_info "Checking first instance status:"
 chronyc -h /var/run/chrony/chronyd-1.sock tracking 2>/dev/null | tee -a "$LOG_FILE"
