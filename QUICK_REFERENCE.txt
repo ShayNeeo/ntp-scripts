@@ -1,4 +1,4 @@
-=== NTP SCRIPTS QUICK REFERENCE (UPDATED) ===
+f=== NTP SCRIPTS QUICK REFERENCE (UPDATED) ===
 
 CRITICAL FIXES APPLIED:
 ✅ Socket creation: Added bindcmdaddress for all instances

@@ -153,7 +153,7 @@ print_success "Directory /var/run/chrony is ready."
 # 8. Create the multichronyd.sh Script (*** MODIFIED FOR CPU LIMITING ***)
 print_action "Generating the /root/multichronyd.sh script"
 print_info "${LIMIT_EMOJI} Each process will be limited to 30% CPU."
-cat << 'SCRIPT' > /root/multichronyd.sh
+cat << SCRIPT > /root/multichronyd.sh
 #!/bin/bash
 servers=${CPU_CORES}
 
@@ -162,7 +162,7 @@ if [ -x "/usr/sbin/chronyd" ]; then
 elif [ -x "/usr/bin/chronyd" ]; then
     chronyd="/usr/bin/chronyd"
 elif command -v chronyd >/dev/null 2>&1; then
-    chronyd=$(command -v chronyd)
+    chronyd=\$(command -v chronyd)
 else
     echo "Error: chronyd not found"
     exit 1
@@ -171,7 +171,7 @@ fi
 trap terminate SIGINT SIGTERM
 terminate() {
   for p in /var/run/chrony/chronyd*.pid; do
-    pid=$(cat "$p" 2>/dev/null) && [[ "$pid" =~ [0-9]+ ]] && kill "$pid" 2>/dev/null
+    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
   done
   wait 2>/dev/null
 }
@@ -180,31 +180,26 @@ mkdir -p /var/run/chrony
 chmod 1777 /var/run/chrony
 
 # Determine chrony version for options
-case "$("$chronyd" --version 2>/dev/null | grep -o -E '[0-9]+\.[0-9]+')" in
+case "\$("\$chronyd" --version 2>/dev/null | grep -o -E '[0-9]+\.[0-9]+')" in
   4.0*) opts="" ;;
   4.1*) opts="xleave copy" ;;
   *) opts="xleave copy extfield F323" ;;
 esac
 
 # --- Launch Server Instances ---
-for i in $(seq 1 "$servers"); do
-  "$chronyd" -n -f - <<EOF &
-server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 $opts
-allow
-cmdport 0
-bindcmdaddress /var/run/chrony/chronyd-server$i.sock
-pidfile /var/run/chrony/chronyd-server$i.pid
-EOF
+for i in \$(seq 1 "\$servers"); do
+  printf 'server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 %s\nallow\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-server%d.sock\npidfile /var/run/chrony/chronyd-server%d.pid\n' "\$opts" "\$i" "\$i" | \\
+  "\$chronyd" -n -f - &
 done
 
 # --- Launch Client Instance ---
-"$chronyd" -n -f /etc/chrony/chrony.conf \
-  -x port 11123 \
-  -x "bindaddress 127.0.0.1" \
-  -x "sched_priority 1" \
-  -x "allow 127.0.0.1" \
-  -x "cmdport 0" \
-  -x "bindcmdaddress /var/run/chrony/chronyd-client.sock" \
+"\$chronyd" -n -f /etc/chrony/chrony.conf \\
+  -x port 11123 \\
+  -x "bindaddress 127.0.0.1" \\
+  -x "sched_priority 1" \\
+  -x "allow 127.0.0.1" \\
+  -x "cmdport 0" \\
+  -x "bindcmdaddress /var/run/chrony/chronyd-client.sock" \\
   -x "pidfile /var/run/chrony/chronyd-client.pid" &
 
 wait
