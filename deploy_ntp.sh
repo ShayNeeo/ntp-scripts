@@ -166,8 +166,14 @@ print_action "Creating /root/multichronyd.sh launcher"
 
 # Fix permissions for /var/run/chrony
 mkdir -p /var/run/chrony
-chmod 755 /var/run/chrony
-chown root:root /var/run/chrony
+chmod 770 /var/run/chrony
+# Find the chronyd user and set ownership
+CHRONY_USER=$(getent passwd | grep -E 'chronyd?|_chrony' | cut -d: -f1 | head -1)
+if [ -n "$CHRONY_USER" ]; then
+    chown "$CHRONY_USER:$CHRONY_USER" /var/run/chrony
+else
+    chown root:root /var/run/chrony
+fi
 
 cat > /root/multichronyd.sh << 'LAUNCHER'
 #!/bin/bash
