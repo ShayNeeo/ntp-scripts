@@ -1,17 +1,16 @@
 #!/bin/bash
 
 # --- Configuration ---
-# This is the most important setting.
-# It matches your provider's ToS (30% average).
-CPU_LIMIT="30%"
+# This is the per-process limit suggested by your provider.
+CPU_LIMIT_PER_PROCESS="30%"
 
 # --- ANSI Colors & Emojis ---
 RED="\033[0;31m"; GREEN="\033[0;32m"; YELLOW="\033[1;33m"; BLUE="\033[0;34m"; CYAN="\033[0;36m"; RESET="\033[0m"
 CHECK_EMOJI="✅"; ERROR_EMOJI="❌"; INFO_EMOJI="ℹ️"; SYNC_EMOJI="🔄"; SERVER_EMOJI="🛡️"; FIREWALL_EMOJI="🔥"; LIMIT_EMOJI="🚦"
 
 # --- Log file setup ---
-LOG_FILE="/var/log/safe_chrony_setup.log"
-touch "$LOG_FILE" &>/dev/null || LOG_FILE="/tmp/safe_chrony_setup.log"
+LOG_FILE="/var/log/multichrony_setup.log"
+touch "$LOG_FILE" &>/dev/null || LOG_FILE="/tmp/multichrony_setup.log"
 
 # --- Helper Functions for Logging and Output ---
 print_info() { echo -e "${BLUE}${INFO_EMOJI} $1${RESET}" | tee -a "$LOG_FILE"; }
@@ -20,9 +19,28 @@ print_error() { echo -e "${RED}${ERROR_EMOJI} $1${RESET}" | tee -a "$LOG_FILE"; 
 print_warning() { echo -e "${YELLOW}${SYNC_EMOJI} $1${RESET}" | tee -a "$LOG_FILE"; }
 print_action() { echo -e "${CYAN}${SYNC_EMOJI} $1...${RESET}" | tee -a "$LOG_FILE"; }
 
+# --- THE COMPREHENSIVE STRATUM 1 NTP SERVER LIST (as of 2025) ---
+STRATUM_1_SERVERS=(
+    "time.google.com"
+    "time.facebook.com"
+    "time.apple.com"
+    "ntp.se"
+    "ntp.nict.jp"
+    "time.nplindia.org"
+    "time.nist.gov"
+    "tick.usask.ca"
+    "ptbtime1.ptb.de"
+    "clock.fmt.he.net"
+    "ntp1.leontp.com"
+    "vega.cbk.poznan.pl"
+    "ntp.bsn.go.id"
+    "time1.nimt.or.th"
+    "time.hko.hk"
+)
+
 # --- Script Start ---
-echo "=== Safe Chrony Setup run at $(date) ===" > "$LOG_FILE"
-print_info "Starting ToS-Compliant Single-Instance Chrony Setup"
+echo "=== Script run at $(date) ===" > "$LOG_FILE"
+print_info "Starting Universal Multi-Instance Chrony & Firewall Setup"
 
 # 1. Root Check
 if [[ $EUID -ne 0 ]]; then
@@ -43,21 +61,15 @@ elif command -v apk &>/dev/null; then PACKAGE_MANAGER="apk";
 else print_error "Unsupported package manager."; exit 1; fi
 print_success "System: $DISTRO, Package Manager: $PACKAGE_MANAGER"
 
-# 3. Stop and Remove ALL Conflicting Services/Files
-print_action "Stopping and disabling all conflicting time services"
-# Stop your custom service, systemd's, ntpd, and any standard chrony
-systemctl disable --now multichronyd systemd-timesyncd ntpd chrony chronyd &>/dev/null
-print_success "Disabled all known time services."
+# 3. Stop and Disable ALL Conflicting Services
+print_action "Stopping all conflicting time services"
+systemctl disable --now systemd-timesyncd ntpd chrony chronyd multichronyd &>/dev/null
+rm -f /etc/systemd/system/chrony.service.d/cpu_limit.conf # Clean up old script's limit
+print_success "Disabled all known time services to prevent conflicts."
 
-print_action "Removing old multichrony script and service files"
-rm -f /root/multichronyd.sh
-rm -f /etc/systemd/system/multichronyd.service
-systemctl daemon-reload
-print_success "Removed old multichrony files."
-
-# 4. Install Standard Chrony
+# 4. Install Chrony
 if ! command -v chronyd &>/dev/null; then
-    print_action "Installing standard chrony package"
+    print_action "Installing chrony"
     case "$PACKAGE_MANAGER" in
         apt) apt-get update -y && apt-get install -y chrony &>>"$LOG_FILE";;
         dnf|yum) dnf install -y chrony &>>"$LOG_FILE";;
@@ -65,60 +77,20 @@ if ! command -v chronyd &>/dev/null; then
         apk) apk add chrony &>>"$LOG_FILE";;
     esac
     if ! command -v chronyd &>/dev/null; then print_error "Chrony installation failed. Check log: $LOG_FILE"; exit 1; fi
-    print_success "Standard Chrony has been installed."
+    print_success "Chrony has been installed."
 else
-    print_success "Standard Chrony is already installed."
+    print_success "Chrony is already installed."
 fi
 
-# 5. Create Low-CPU chrony.conf
-print_action "Creating low-CPU configuration at /etc/chrony/chrony.conf"
-cat << EOF > /etc/chrony/chrony.conf
-# This is a low-CPU configuration to comply with VPS ToS.
-# It checks servers less frequently (minpoll 8 = 256s, maxpoll 12 = 4096s).
-
-server time.google.com     iburst minpoll 8 maxpoll 12
-server time.facebook.com   iburst minpoll 8 maxpoll 12
-server time.apple.com      iburst minpoll 8 maxpoll 12
-server ntp.se              iburst minpoll 8 maxpoll 12
-
-# Standard settings
-driftfile /var/lib/chrony/chrony.drift
-makestep 1.0 3
-rtcsync
-logdir /var/log/chrony
-allow
-EOF
-print_success "Low-CPU chrony.conf created."
-
-# 6. CRITICAL: Enforce 30% CPU Limit
-print_action "${LIMIT_EMOJI} Enforcing ${CPU_LIMIT} CPU limit via systemd..."
-
-# Find the correct service name (Debian/Ubuntu use 'chrony.service', RHEL/Arch use 'chronyd.service')
-SERVICE_NAME="chrony.service"
-if [ "$PACKAGE_MANAGER" == "dnf" ] || [ "$PACKAGE_MANAGER" == "yum" ] || [ "$PACKAGE_MANAGER" == "pacman" ]; then
-    SERVICE_NAME="chronyd.service"
-fi
-print_info "Targeting service: $SERVICE_NAME"
-
-# Create the systemd drop-in file to apply the limit
-DROP_IN_DIR="/etc/systemd/system/${SERVICE_NAME}.d"
-mkdir -p "$DROP_IN_DIR"
-cat << EOF > "${DROP_IN_DIR}/cpu_limit.conf"
-[Service]
-# This enforces the provider's 30% CPU quota.
-CPUQuota=${CPU_LIMIT}
-EOF
-print_success "Set CPUQuota=${CPU_LIMIT} for ${SERVICE_NAME}."
-
-# 7. Firewall Setup (Re-using your solid logic)
+# 5. Firewall Setup (Install and Configure UFW)
 print_info "${FIREWALL_EMOJI} Checking and configuring firewall..."
 if systemctl is-active --quiet firewalld; then
-    print_success "firewalld is active. Configuring it."
+    print_success "firewalld is already active. Will configure it."
     firewall-cmd --permanent --add-port=123/udp &>>"$LOG_FILE"
     firewall-cmd --reload &>>"$LOG_FILE"
     print_success "Opened port 123/udp on firewalld."
 elif command -v ufw &>/dev/null; then
-    print_success "UFW is already installed. Configuring it."
+    print_success "UFW is already installed. Will configure it."
 else
     print_action "No active firewall found. Installing UFW"
     case "$PACKAGE_MANAGER" in
@@ -134,34 +106,136 @@ fi
 if command -v ufw &>/dev/null; then
     print_action "Configuring UFW rules"
     ufw allow ssh &>>"$LOG_FILE"
-    print_success "Added UFW rule to allow SSH."
+    print_success "Added UFW rule to allow SSH (important!)."
     ufw allow 123/udp &>>"$LOG_FILE"
     print_success "Added UFW rule to allow NTP on port 123/udp."
     echo "y" | ufw enable &>>"$LOG_FILE"
     print_success "UFW has been enabled."
 fi
 
-# 8. Start the Standard Chrony Service
-print_action "Reloading systemd and starting ${SERVICE_NAME}"
-systemctl daemon-reload
-systemctl enable --now ${SERVICE_NAME} &>>"$LOG_FILE"
-if ! systemctl is-active --quiet ${SERVICE_NAME}; then
-    print_error "Failed to start ${SERVICE_NAME}. Check log: $LOG_FILE"; exit 1;
-fi
-print_success "Standard chrony service is now active and running."
 
-# 9. Final Verification
-print_action "Waiting 20 seconds for first sync attempt..."
-sleep 20
+# 6. Interactive CPU Core Selection
+print_action "Configuring CPU core usage"
+TOTAL_CORES=$(nproc)
+while true; do
+    read -p "Enter the number of CPU cores to use (1-${TOTAL_CORES}, default: ${TOTAL_CORES}): " CPU_CORES
+    CPU_CORES=${CPU_CORES:-$TOTAL_CORES}
+    if [[ "$CPU_CORES" =~ ^[1-9][0-9]*$ ]] && [ "$CPU_CORES" -le "$TOTAL_CORES" ]; then
+        print_success "Using $CPU_CORES core(s) for chrony server instances."
+        break
+    else
+        print_error "Invalid input. Please enter a number between 1 and ${TOTAL_CORES}."
+    fi
+done
+
+# 7. Create the Main chrony.conf with Stratum 1 Sources
+CHRONY_CONF="/etc/chrony/chrony.conf"
+mkdir -p "$(dirname "$CHRONY_CONF")"
+print_action "Creating main configuration at $CHRONY_CONF with comprehensive Stratum 1 servers"
+cat << EOF > "$CHRONY_CONF"
+# This file is managed by the multichrony setup script.
+$(for server in "${STRATUM_1_SERVERS[@]}"; do echo "server $server iburst"; done)
+driftfile /var/lib/chrony/chrony.drift
+allow
+makestep 1.0 3
+rtcsync
+logdir /var/log/chrony
+EOF
+print_success "Main configuration file created."
+
+# 8. Create the multichronyd.sh Script (*** MODIFIED FOR CPU LIMITING ***)
+print_action "Generating the /root/multichronyd.sh script"
+print_info "${LIMIT_EMOJI} Each process will be limited to ${CPU_LIMIT_PER_PROCESS} CPU."
+cat << EOF > /root/multichronyd.sh
+#!/bin/bash
+servers=${CPU_CORES}
+chronyd="/usr/sbin/chronyd"
+# This is the command wrapper to apply the CPU limit
+LIMIT_CMD="systemd-run --scope -p CPUQuota=${CPU_LIMIT_PER_PROCESS}"
+
+trap terminate SIGINT SIGTERM
+terminate() {
+  # Kill all child processes (the systemd-run scopes)
+  pkill -P \$$
+  # Clean up PIDs
+  for p in /var/run/chrony/chronyd*.pid; do
+    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
+  done
+}
+conf="/etc/chrony/chrony.conf"
+case "\$(\"\$chronyd\" --version | grep -o -E '[1-9]\.[0-9]+')" in
+  1.*|2.*|3.*) echo "chrony version too old"; exit 1;;
+  4.0) opts="";;
+  4.1) opts="xleave copy";;
+  *) opts="xleave copy extfield F323";;
+esac
+mkdir -p /var/run/chrony
+
+# --- Launch Server Instances with CPU Limit ---
+for i in \$(seq 1 "\$servers"); do
+  \$LIMIT_CMD "\$chronyd" "\$@" -n -x \\
+    "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
+    "allow" "cmdport 0" \\
+    "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
+    "pidfile /var/run/chrony/chronyd-server\$i.pid" &
+done
+
+# --- Launch Client Instance with CPU Limit ---
+\$LIMIT_CMD "\$chronyd" "\$@" -n \\
+  "include \$conf" \\
+  "pidfile /var/run/chrony/chronyd-client.pid" \\
+  "bindcmdaddress /var/run/chrony/chronyd-client.sock" \\
+  "port 11123" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" &
+  
+wait
+EOF
+chmod +x /root/multichronyd.sh
+print_success "Multi-instance script created and made executable."
+
+# 9. Create the systemd Service File
+print_action "Creating the multichronyd.service systemd file"
+# We add 'KillMode=process' so systemd only kills the main script,
+# allowing the trap to clean up the child processes.
+# We also add 'Delegate=yes' to allow the script to create its own cgroups.
+cat << 'EOF' > /etc/systemd/system/multichronyd.service
+[Unit]
+Description=Multi-Instance Chronyd Service Manager
+After=network.target
+[Service]
+User=root
+Group=root
+ExecStart=/root/multichronyd.sh
+KillMode=process
+Restart=always
+RestartSec=10
+# Allow the script to create its own cgroup scopes
+Delegate=yes
+[Install]
+WantedBy=multi-user.target
+EOF
+print_success "Systemd service file created."
+
+# 10. Start the Multi-Chrony Service
+print_action "Reloading systemd and starting multichronyd.service"
+systemctl daemon-reload
+systemctl enable --now multichronyd.service &>>"$LOG_FILE"
+if ! systemctl is-active --quiet multichronyd; then
+    print_error "Failed to start multichronyd.service. Check log: $LOG_FILE"; exit 1;
+fi
+print_success "Multi-instance chrony service is now active."
+
+# 11. Final Verification
+print_action "Waiting for initial sync..."
+sleep 60
 print_info "Final Sync Status (chronyc tracking):"
-chronyc tracking | tee -a "$LOG_FILE"
+chronyc -h /var/run/chrony/chronyd-client.sock tracking | tee -a "$LOG_FILE"
 print_info "Active Time Sources (chronyc sources):"
-chronyc sources | tee -a "$LOG_FILE"
+chronyc -h /var/run/chrony/chronyd-client.sock sources | tee -a "$LOG_FILE"
 
 if ss -lupn | grep -q ":123"; then
     print_success "${SERVER_EMOJI} NTP service is up and listening on port 123."
 else
-    print_warning "NTP service is not listening on port 123. (This is OK if you don't need to be a public server)."
+    print_warning "NTP service is not listening on port 123. It may be in client-only mode or blocked."
 fi
 
-print_success "Setup complete! Chrony is now running and limited to ${CPU_LIMIT} CPU."
+print_info "Setup complete! All processes are limited to ${CPU_LIMIT_PER_PROCESS} each."
