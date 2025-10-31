@@ -153,9 +153,9 @@ print_success "Directory /var/run/chrony is ready."
 # 8. Create the multichronyd.sh Script (*** MODIFIED FOR CPU LIMITING ***)
 print_action "Generating the /root/multichronyd.sh script"
 print_info "${LIMIT_EMOJI} Each process will be limited to 30% CPU."
-cat << SCRIPT > /root/multichronyd.sh
+cat << 'SCRIPT' > /root/multichronyd.sh
 #!/bin/bash
-clients=${CPU_CORES}
+clients=__CPU_CORES__
 
 if [ -x "/usr/sbin/chronyd" ]; then
     chronyd="/usr/sbin/chronyd"
@@ -200,7 +200,7 @@ done
 
 wait
 SCRIPT
-
+sed -i "s/__CPU_CORES__/${CPU_CORES}/g" /root/multichronyd.sh
 chmod +x /root/multichronyd.sh
 print_success "Multi-instance script created and made executable."
 
