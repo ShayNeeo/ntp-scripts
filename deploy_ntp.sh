@@ -156,7 +156,6 @@ local stratum 10
 
 # --- Performance Tuning ---
 hwtimestamp *
-correctiontime 1.0 2.0
 CONF
 
 print_success "Chrony configuration created"
