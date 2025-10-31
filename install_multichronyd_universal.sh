@@ -154,37 +154,21 @@ print_action "Generating the /root/multichronyd.sh script"
 cat << EOF > /root/multichronyd.sh
 #!/bin/bash
 servers=${CPU_CORES}
-# Find chronyd dynamically
-if [ -x "/usr/sbin/chronyd" ]; then
-    chronyd="/usr/sbin/chronyd"
-elif [ -x "/usr/bin/chronyd" ]; then
-    chronyd="/usr/bin/chronyd"
-elif command -v chronyd >/dev/null 2>&1; then
-    chronyd=\$(command -v chronyd)
-else
-    echo "Error: chronyd not found"
-    exit 1
-fi
-
+chronyd="/usr/sbin/chronyd"
 trap terminate SIGINT SIGTERM
 terminate() {
   for p in /var/run/chrony/chronyd*.pid; do
-    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
+    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid"
   done
-  wait 2>/dev/null
 }
-
 conf="/etc/chrony/chrony.conf"
-case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
+case "\$(\"\$chronyd\" --version | grep -o -E '[1-9]\.[0-9]+')" in
   1.*|2.*|3.*) echo "chrony version too old"; exit 1;;
   4.0) opts="";;
   4.1) opts="xleave copy";;
   *) opts="xleave copy extfield F323";;
 esac
 mkdir -p /var/run/chrony
-chmod 1777 /var/run/chrony
-# Server instances: listen on port 123 (default) for public access with 'allow'
-# They get time from the client instance on port 11123
 for i in \$(seq 1 "\$servers"); do
   "\$chronyd" "\$@" -n -x \\
     "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
@@ -192,8 +176,6 @@ for i in \$(seq 1 "\$servers"); do
     "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
     "pidfile /var/run/chrony/chronyd-server\$i.pid" &
 done
-# Client instance: syncs with external Stratum 1 servers, serves time to server instances on port 11123
-# This instance is internal-only and listens on port 11123 for server instances to connect
 "\$chronyd" "\$@" -n \\
   "include \$conf" \\
   "pidfile /var/run/chrony/chronyd-client.pid" \\
@@ -216,7 +198,6 @@ Group=root
 ExecStart=/root/multichronyd.sh
 Restart=always
 RestartSec=10
-Type=simple
 [Install]
 WantedBy=multi-user.target
 EOF
