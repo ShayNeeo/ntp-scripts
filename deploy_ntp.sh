@@ -201,7 +201,6 @@ case "$("$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
 esac
 
 mkdir -p /var/run/chrony
-rm -f /var/run/chrony/chronyd*.sock /var/run/chrony/chronyd*.pid
 
 # SO_REUSEPORT: All instances listen on same port 123
 # Kernel distributes incoming NTP requests across all instances
