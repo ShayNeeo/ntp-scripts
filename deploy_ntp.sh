@@ -195,6 +195,7 @@ case "$("$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
 esac
 
 mkdir -p /var/run/chrony
+rm -f /var/run/chrony/chronyd*.sock /var/run/chrony/chronyd*.pid
 
 # SO_REUSEPORT: All instances listen on same port 123
 # Kernel distributes incoming NTP requests across all instances
@@ -209,7 +210,6 @@ for i in $(seq 1 "$servers"); do
 		"sched_priority 1" \
 		"local stratum 10" \
 		"cmdport 0" \
-		"bindcmdaddress /var/run/chrony/chronyd-$i.sock" \
 		"pidfile /var/run/chrony/chronyd-$i.pid" &
 done
 
