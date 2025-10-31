@@ -227,7 +227,7 @@ Wants=network-online.target
 [Service]
 User=root
 Group=root
-Type=notify
+Type=simple
 ExecStart=/root/multichronyd.sh
 Restart=always
 RestartSec=5
