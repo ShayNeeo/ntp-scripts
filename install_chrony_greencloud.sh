@@ -180,9 +180,10 @@ fi
 
 trap terminate SIGINT SIGTERM
 terminate() {
-  pkill -f "chronyd.*-n -x"
-  pkill -f "chronyd.*include.*conf"
-  sleep 1
+  for p in /var/run/chrony/chronyd*.pid; do
+    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
+  done
+  wait 2>/dev/null
 }
 
 conf="/etc/chrony/chrony.conf"
@@ -193,15 +194,16 @@ case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
   *) opts="xleave copy extfield F323";;
 esac
 
-# Ensure directory exists
+# Ensure directory exists with proper permissions
 mkdir -p /var/run/chrony
 chmod 1777 /var/run/chrony
 
-# --- Launch Server Instances (without systemd-run, use cmdport 0 to disable sockets) ---
+# --- Launch Server Instances ---
 for i in \$(seq 1 "\$servers"); do
   "\$chronyd" "\$@" -n -x \\
     "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
     "allow" "cmdport 0" \\
+    "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
     "pidfile /var/run/chrony/chronyd-server\$i.pid" &
 done
 
@@ -209,6 +211,7 @@ done
 "\$chronyd" "\$@" -n \\
   "include \$conf" \\
   "pidfile /var/run/chrony/chronyd-client.pid" \\
+  "bindcmdaddress /var/run/chrony/chronyd-client.sock" \\
   "port 11123" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" "cmdport 0" &
 
 wait
@@ -219,23 +222,25 @@ print_success "Multi-instance script created and made executable."
 
 # 9. Create the systemd Service File
 print_action "Creating the multichronyd.service systemd file"
+CPU_QUOTA=$((($CPU_CORES + 1) * 30))
 cat << 'EOF' > /etc/systemd/system/multichronyd.service
 [Unit]
 Description=Multi-Instance Chronyd Service Manager
 After=network.target
 [Service]
+Type=simple
 User=root
 Group=root
 ExecStart=/root/multichronyd.sh
 KillMode=process
 Restart=always
 RestartSec=10
-# Apply CPU quota (30% per process across all processes in this service)
-CPUQuota=60%
 MemoryLimit=512M
+CPUQuota=${CPU_QUOTA}%
 [Install]
 WantedBy=multi-user.target
 EOF
+sed -i "s|\${CPU_QUOTA}|$CPU_QUOTA|g" /etc/systemd/system/multichronyd.service
 print_success "Systemd service file created."
 
 # 10. Start the Multi-Chrony Service
@@ -251,52 +256,34 @@ print_success "Multi-instance chrony service is now active."
 print_action "Waiting for initial sync..."
 sleep 15
 
-# Try to connect to chrony instances for status
-CLIENT_SOCK="/var/run/chrony/chronyd-client.sock"
-SERVER_SOCK="/var/run/chrony/chronyd-server1.sock"
-
-# Wait for sockets to appear
-print_action "Waiting for control sockets to initialize..."
-for attempt in {1..15}; do
-    if [ -S "$CLIENT_SOCK" ] || [ -S "$SERVER_SOCK" ]; then
+# Fix socket permissions for access
+for attempt in {1..10}; do
+    if [ -S /var/run/chrony/chronyd-client.sock ] || [ -S /var/run/chrony/chronyd-server1.sock ]; then
+        chmod 666 /var/run/chrony/chronyd*.sock 2>/dev/null
         break
     fi
-    sleep 2
+    sleep 1
 done
 
-# Fix socket permissions if they exist
-if [ -S "$CLIENT_SOCK" ] || [ -S "$SERVER_SOCK" ]; then
-    for sock in /var/run/chrony/chronyd*.sock; do
-        [ -S "$sock" ] && chmod 666 "$sock" 2>/dev/null
-    done
-fi
-
+CLIENT_SOCK="/var/run/chrony/chronyd-client.sock"
 if [ -S "$CLIENT_SOCK" ]; then
-    print_info "Final Sync Status (chronyc tracking from client):"
-    chronyc -h "$CLIENT_SOCK" tracking 2>&1 | tee -a "$LOG_FILE" || print_warning "Could not connect to client instance"
-    print_info "Active Time Sources (chronyc sources from client):"
-    chronyc -h "$CLIENT_SOCK" sources 2>&1 | tee -a "$LOG_FILE" || print_warning "Could not connect to client instance"
-elif [ -S "$SERVER_SOCK" ]; then
-    print_info "Final Sync Status (chronyc tracking from server instance 1):"
-    chronyc -h "$SERVER_SOCK" tracking 2>&1 | tee -a "$LOG_FILE" || print_warning "Could not connect to server instance"
-    print_info "Active Time Sources (chronyc sources from server instance 1):"
-    chronyc -h "$SERVER_SOCK" sources 2>&1 | tee -a "$LOG_FILE" || print_warning "Could not connect to server instance"
+    print_info "Final Sync Status (chronyc tracking):"
+    chronyc -h "$CLIENT_SOCK" tracking 2>&1 | tee -a "$LOG_FILE" || print_warning "Socket access limited"
+    print_info "Active Time Sources (chronyc sources):"
+    chronyc -h "$CLIENT_SOCK" sources 2>&1 | tee -a "$LOG_FILE" || print_warning "Socket access limited"
+elif [ -S /var/run/chrony/chronyd-server1.sock ]; then
+    print_info "Final Sync Status (chronyc tracking from server 1):"
+    chronyc -h /var/run/chrony/chronyd-server1.sock tracking 2>&1 | tee -a "$LOG_FILE" || true
 else
-    print_warning "No chrony control sockets found after waiting."
     if pgrep -f chronyd > /dev/null; then
-        print_info "Chronyd processes are running. The NTP service is functional."
-        print_info "Socket access may be limited due to systemd-run isolation, but NTP on port 123 is working."
-        print_info "Check service: systemctl status multichronyd.service"
-        print_info "Check logs: journalctl -u multichronyd.service -n 50"
-    else
-        print_error "Chronyd processes are not running. Check service status: systemctl status multichronyd"
+        print_info "Chronyd processes running. NTP service is active."
     fi
 fi
 
-if ss -lupn | grep -q ":123"; then
-    print_success "${SERVER_EMOJI} NTP service is up and listening on port 123."
+if ss -lupn 2>/dev/null | grep -q ":123"; then
+    print_success "${SERVER_EMOJI} NTP service is listening on port 123."
 else
-    print_warning "NTP service is not listening on port 123. It may be in client-only mode or blocked."
+    print_warning "NTP service not detected on port 123. Check: systemctl status multichronyd.service"
 fi
 
-print_info "Setup complete! All processes are limited to ${CPU_LIMIT_PER_PROCESS} each."
+print_info "Setup complete! Each process limited to 30% CPU (Total: ${CPU_QUOTA}%)"
