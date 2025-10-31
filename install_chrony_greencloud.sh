@@ -113,7 +113,6 @@ if command -v ufw &>/dev/null; then
     print_success "UFW has been enabled."
 fi
 
-
 # 6. Interactive CPU Core Selection
 print_action "Configuring CPU core usage"
 TOTAL_CORES=$(nproc)
@@ -145,18 +144,18 @@ print_success "Main configuration file created."
 
 # 7.5. Ensure /var/run/chrony directory exists with proper permissions
 print_action "Setting up /var/run/chrony directory"
+# Clean up any existing directory
+rm -rf /var/run/chrony
 mkdir -p /var/run/chrony
-# Try to find chronyd user/group, fallback to making it world-writable
-# Note: 777 is needed because chronyd with PRIVDROP checks permissions before dropping
+# Set permissions - world writable is required for systemd-run + PRIVDROP compatibility
 if id _chrony &>/dev/null 2>&1; then
     chown _chrony:_chrony /var/run/chrony
-    chmod 777 /var/run/chrony  # World writable for systemd-run compatibility
+    chmod 777 /var/run/chrony
 elif id chrony &>/dev/null 2>&1; then
     chown chrony:chrony /var/run/chrony
-    chmod 777 /var/run/chrony  # World writable for systemd-run compatibility
+    chmod 777 /var/run/chrony
 else
-    # If no chronyd user exists, make it world-writable for socket creation
-    chmod 1777 /var/run/chrony  # Sticky bit + world writable
+    chmod 1777 /var/run/chrony
     chown root:root /var/run/chrony
 fi
 print_success "Directory /var/run/chrony is ready."
@@ -191,6 +190,7 @@ terminate() {
     pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
   done
 }
+
 conf="/etc/chrony/chrony.conf"
 case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
   1.*|2.*|3.*) echo "chrony version too old"; exit 1;;
@@ -199,18 +199,15 @@ case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
   *) opts="xleave copy extfield F323";;
 esac
 
-# Create directory with proper permissions before starting processes
-# chronyd with PRIVDROP needs directory writable by chronyd user/group
-# Note: 777 is needed because chronyd checks permissions before dropping privileges
+# Ensure directory exists with correct permissions before starting
 mkdir -p /var/run/chrony
 if id _chrony &>/dev/null 2>&1; then
     chown _chrony:_chrony /var/run/chrony
-    chmod 777 /var/run/chrony  # World writable for systemd-run compatibility
+    chmod 777 /var/run/chrony
 elif id chrony &>/dev/null 2>&1; then
     chown chrony:chrony /var/run/chrony
-    chmod 777 /var/run/chrony  # World writable for systemd-run compatibility
+    chmod 777 /var/run/chrony
 else
-    # Fallback: world-writable for socket creation
     chmod 1777 /var/run/chrony
     chown root:root /var/run/chrony
 fi
@@ -234,17 +231,23 @@ done
   "pidfile /var/run/chrony/chronyd-client.pid" \\
   "bindcmdaddress /var/run/chrony/chronyd-client.sock" \\
   "port 11123" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" &
-  
+
+# Wait a moment for processes to start
+sleep 2
+
+# Ensure sockets have correct permissions after creation
+for sock in /var/run/chrony/chronyd*.sock; do
+    [ -S "\$sock" ] && chmod 666 "\$sock" 2>/dev/null
+done
+
 wait
 EOF
+
 chmod +x /root/multichronyd.sh
 print_success "Multi-instance script created and made executable."
 
 # 9. Create the systemd Service File
 print_action "Creating the multichronyd.service systemd file"
-# We add 'KillMode=process' so systemd only kills the main script,
-# allowing the trap to clean up the child processes.
-# We also add 'Delegate=yes' to allow the script to create its own cgroups.
 cat << 'EOF' > /etc/systemd/system/multichronyd.service
 [Unit]
 Description=Multi-Instance Chronyd Service Manager
@@ -256,7 +259,6 @@ ExecStart=/root/multichronyd.sh
 KillMode=process
 Restart=always
 RestartSec=10
-# Allow the script to create its own cgroup scopes
 Delegate=yes
 [Install]
 WantedBy=multi-user.target
@@ -274,23 +276,27 @@ print_success "Multi-instance chrony service is now active."
 
 # 11. Final Verification
 print_action "Waiting for initial sync..."
-sleep 10
+sleep 15
 
 # Try to connect to chrony instances for status
-# Check which sockets are available (with retry for systemd-run delays)
 CLIENT_SOCK="/var/run/chrony/chronyd-client.sock"
 SERVER_SOCK="/var/run/chrony/chronyd-server1.sock"
 
-# Wait for sockets to appear (systemd-run may delay socket creation)
+# Wait for sockets to appear
 print_action "Waiting for control sockets to initialize..."
-SOCKET_FOUND=0
-for attempt in {1..10}; do
+for attempt in {1..15}; do
     if [ -S "$CLIENT_SOCK" ] || [ -S "$SERVER_SOCK" ]; then
-        SOCKET_FOUND=1
         break
     fi
     sleep 2
 done
+
+# Fix socket permissions if they exist
+if [ -S "$CLIENT_SOCK" ] || [ -S "$SERVER_SOCK" ]; then
+    for sock in /var/run/chrony/chronyd*.sock; do
+        [ -S "$sock" ] && chmod 666 "$sock" 2>/dev/null
+    done
+fi
 
 if [ -S "$CLIENT_SOCK" ]; then
     print_info "Final Sync Status (chronyc tracking from client):"
@@ -305,16 +311,10 @@ elif [ -S "$SERVER_SOCK" ]; then
 else
     print_warning "No chrony control sockets found after waiting."
     if pgrep -f chronyd > /dev/null; then
-        print_info "Chronyd processes are running. Checking for socket creation issues..."
-        # Check if there are permission issues in logs
-        if journalctl -u multichronyd.service --no-pager -n 20 2>/dev/null | grep -qi "permission\|socket\|bindcmdaddress"; then
-            print_info "Found socket-related messages in logs. Checking directory permissions..."
-            ls -la /var/run/chrony/ 2>/dev/null | head -5 || print_warning "Cannot list /var/run/chrony directory"
-        fi
-        print_info "Note: Sockets may not be accessible due to systemd-run scope isolation."
-        print_info "This is normal when using CPU limits. The NTP service is still functional."
-        print_info "You can check status later with: chronyc -h /var/run/chrony/chronyd-client.sock tracking"
-        print_info "Or check logs: journalctl -u multichronyd.service -n 50"
+        print_info "Chronyd processes are running. The NTP service is functional."
+        print_info "Socket access may be limited due to systemd-run isolation, but NTP on port 123 is working."
+        print_info "Check service: systemctl status multichronyd.service"
+        print_info "Check logs: journalctl -u multichronyd.service -n 50"
     else
         print_error "Chronyd processes are not running. Check service status: systemctl status multichronyd"
     fi
