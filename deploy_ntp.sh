@@ -152,6 +152,7 @@ log measurements statistics tracking
 
 # --- Public Server Settings ---
 allow 0/0
+allow ::/0
 local stratum 10
 
 # --- Performance Tuning ---
