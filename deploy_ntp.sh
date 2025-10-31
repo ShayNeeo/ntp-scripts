@@ -267,14 +267,14 @@ fi
 
 # 11. Verify
 print_header "VERIFICATION & STATUS"
-print_action "Waiting 60 seconds for time sync..."
+print_action "Waiting 10 seconds for time sync..."
 sleep 10
 
 print_info "Checking first instance status:"
-chronyc -h /var/run/chrony/chronyd-1.sock tracking 2>/dev/null | tee -a "$LOG_FILE"
+chronyc sources | tee -a "$LOG_FILE"
 
 print_info "Active time sources:"
-chronyc -h /var/run/chrony/chronyd-1.sock sources 2>/dev/null | tee -a "$LOG_FILE"
+chronyc tracking | tee -a "$LOG_FILE"
 
 print_info "Number of listening NTP instances:"
 ss -lupn 2>/dev/null | grep -c ":123 " || echo "0"
