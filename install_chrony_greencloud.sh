@@ -155,14 +155,14 @@ print_action "Generating the /root/multichronyd.sh script"
 print_info "${LIMIT_EMOJI} Each process will be limited to 30% CPU."
 cat << SCRIPT > /root/multichronyd.sh
 #!/bin/bash
-clients=\${CPU_CORES}
+clients=${CPU_CORES}
 
 if [ -x "/usr/sbin/chronyd" ]; then
     chronyd="/usr/sbin/chronyd"
 elif [ -x "/usr/bin/chronyd" ]; then
     chronyd="/usr/bin/chronyd"
 elif command -v chronyd >/dev/null 2>&1; then
-    chronyd=\$(command -v chronyd)
+    chronyd=$(command -v chronyd)
 else
     echo "Error: chronyd not found"
     exit 1
@@ -171,7 +171,7 @@ fi
 trap terminate SIGINT SIGTERM
 terminate() {
   for p in /var/run/chrony/chronyd*.pid; do
-    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
+    pid=$(cat "$p" 2>/dev/null) && [[ "$pid" =~ [0-9]+ ]] && kill "$pid" 2>/dev/null
   done
   wait 2>/dev/null
 }
@@ -180,23 +180,23 @@ mkdir -p /var/run/chrony
 chmod 1777 /var/run/chrony
 
 # Determine chrony version for options
-case "\$("\$chronyd" --version 2>/dev/null | grep -o -E '[0-9]+\.[0-9]+')" in
+case "$("${chronyd}" --version 2>/dev/null | grep -o -E '[0-9]+\.[0-9]+')" in
   4.0*) opts="" ;;
   4.1*) opts="xleave copy" ;;
   *) opts="xleave copy extfield F323" ;;
 esac
 
 # --- Launch Multiple Client Instances (each syncs with Stratum 1) ---
-for i in \$(seq 1 "\$clients"); do
-  printf 'include /etc/chrony/chrony.conf\nport 1123%d\nbindaddress 127.0.0.1\nsched_priority 1\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-client%d.sock\npidfile /var/run/chrony/chronyd-client%d.pid\n' "\$i" "\$i" "\$i" | "\$chronyd" -n -f - &
+for i in $(seq 1 "$clients"); do
+  printf 'include /etc/chrony/chrony.conf\nport 1123%d\nbindaddress 127.0.0.1\nsched_priority 1\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-client%d.sock\npidfile /var/run/chrony/chronyd-client%d.pid\n' "$i" "$i" "$i" | "${chronyd}" -n -f - &
 done
 
 # --- Launch Server Instance (listens on port 123, pulls from all clients) ---
-printf 'allow\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-server.sock\npidfile /var/run/chrony/chronyd-server.pid\n' > /tmp/chrony-server.conf
-for i in \$(seq 1 "\$clients"); do
-  echo "server 127.0.0.1 port 1123\$i minpoll 0 maxpoll 0 \$opts" >> /tmp/chrony-server.conf
+printf 'allow\ncmdport 0\nbindcmdaddress /var/run/chrony/chronyd-server.sock\npidfile /var/run/chrony/chronyd-server.pid\n' > /var/run/chrony/chrony-server.conf
+for i in $(seq 1 "$clients"); do
+  echo "server 127.0.0.1 port 1123$i minpoll 0 maxpoll 0 $opts" >> /var/run/chrony/chrony-server.conf
 done
-"\$chronyd" -n -f /tmp/chrony-server.conf &
+"${chronyd}" -n -f /var/run/chrony/chrony-server.conf &
 
 wait
 SCRIPT
