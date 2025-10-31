@@ -143,13 +143,31 @@ logdir /var/log/chrony
 EOF
 print_success "Main configuration file created."
 
+# 7.5. Ensure /var/run/chrony directory exists with proper permissions
+print_action "Setting up /var/run/chrony directory"
+mkdir -p /var/run/chrony
+chmod 755 /var/run/chrony
+chown root:root /var/run/chrony
+print_success "Directory /var/run/chrony is ready."
+
 # 8. Create the multichronyd.sh Script (*** MODIFIED FOR CPU LIMITING ***)
 print_action "Generating the /root/multichronyd.sh script"
 print_info "${LIMIT_EMOJI} Each process will be limited to ${CPU_LIMIT_PER_PROCESS} CPU."
 cat << EOF > /root/multichronyd.sh
 #!/bin/bash
 servers=${CPU_CORES}
-chronyd="/usr/sbin/chronyd"
+# Find chronyd dynamically - try common locations and PATH
+if [ -x "/usr/sbin/chronyd" ]; then
+    chronyd="/usr/sbin/chronyd"
+elif [ -x "/usr/bin/chronyd" ]; then
+    chronyd="/usr/bin/chronyd"
+elif command -v chronyd >/dev/null 2>&1; then
+    chronyd=\$(command -v chronyd)
+else
+    echo "Error: chronyd not found"
+    exit 1
+fi
+
 # This is the command wrapper to apply the CPU limit
 LIMIT_CMD="systemd-run --scope -p CPUQuota=${CPU_LIMIT_PER_PROCESS}"
 
@@ -163,13 +181,17 @@ terminate() {
   done
 }
 conf="/etc/chrony/chrony.conf"
-case "\$(\"\$chronyd\" --version | grep -o -E '[1-9]\.[0-9]+')" in
+case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
   1.*|2.*|3.*) echo "chrony version too old"; exit 1;;
   4.0) opts="";;
   4.1) opts="xleave copy";;
   *) opts="xleave copy extfield F323";;
 esac
+
+# Create directory with proper permissions before starting processes
 mkdir -p /var/run/chrony
+chmod 755 /var/run/chrony
+chown root:root /var/run/chrony
 
 # --- Launch Server Instances with CPU Limit ---
 # Server instances: listen on port 123 (default) for public access with 'allow'
