@@ -47,7 +47,7 @@ STRATUM_1_SERVERS=(
 
 # --- Script Start ---
 echo "=== Script run at $(date) ===" > "$LOG_FILE"
-print_info "Starting Greencloud Multi-Instance Chrony Setup with CPU Limits (2 cores, 2 server instances @ 30% each)"
+print_info "Starting GreenCloud Multi-Instance Chrony & Firewall Setup with CPU Limits"
 
 # 1. Root Check
 if [[ $EUID -ne 0 ]]; then
@@ -97,13 +97,16 @@ if ! command -v cpulimit &>/dev/null; then
         pacman) pacman -S --noconfirm cpulimit &>>"$LOG_FILE";;
         apk) apk add cpulimit &>>"$LOG_FILE";;
     esac
-    if ! command -v cpulimit &>/dev/null; then
-        print_error "cpulimit installation failed. CPU limiting will not work. Check log: $LOG_FILE"
-        exit 1
+    if ! command -v cpulimit &>/dev/null; then 
+        print_warning "cpulimit installation failed. CPU limiting will be disabled."
+        CPULIMIT_AVAILABLE=false
+    else
+        print_success "cpulimit has been installed."
+        CPULIMIT_AVAILABLE=true
     fi
-    print_success "cpulimit has been installed."
 else
     print_success "cpulimit is already installed."
+    CPULIMIT_AVAILABLE=true
 fi
 
 # 6. Firewall Setup (Install and Configure UFW)
@@ -137,11 +140,12 @@ if command -v ufw &>/dev/null; then
     print_success "UFW has been enabled."
 fi
 
-# 7. Configure for 2 CPU cores (hardcoded for greencloud)
+# 7. GreenCloud Configuration: Fixed 2 CPU cores, 2 server processes
+print_action "Configuring GreenCloud setup (2 CPU cores, 2 server processes)"
 CPU_CORES=2
-print_info "Configured for 2 CPU cores VPS:"
-print_info "  - chrony (client): no CPU limit"
-print_info "  - _chrony (2 server instances): 30% CPU limit each (total: 60%)"
+SERVER_PROCESSES=2
+CPU_LIMIT_PER_PROCESS=30
+print_success "GreenCloud configuration: $SERVER_PROCESSES server processes, each limited to ${CPU_LIMIT_PER_PROCESS}% CPU"
 
 # 8. Create the Main chrony.conf with Stratum 1 Sources
 CHRONY_CONF="/etc/chrony/chrony.conf"
@@ -162,96 +166,67 @@ print_success "Main configuration file created."
 print_action "Generating the /root/multichronyd.sh script with CPU limits"
 cat << EOF > /root/multichronyd.sh
 #!/bin/bash
-servers=${CPU_CORES}
-CPU_LIMIT_PERCENT=30
-
-# Find chronyd dynamically
-if [ -x "/usr/sbin/chronyd" ]; then
-    chronyd="/usr/sbin/chronyd"
-elif [ -x "/usr/bin/chronyd" ]; then
-    chronyd="/usr/bin/chronyd"
-elif command -v chronyd >/dev/null 2>&1; then
-    chronyd=\$(command -v chronyd)
-else
-    echo "Error: chronyd not found"
-    exit 1
-fi
-
-# Find cpulimit dynamically
-if [ -x "/usr/bin/cpulimit" ]; then
-    cpulimit="/usr/bin/cpulimit"
-elif [ -x "/usr/local/bin/cpulimit" ]; then
-    cpulimit="/usr/local/bin/cpulimit"
-elif command -v cpulimit >/dev/null 2>&1; then
-    cpulimit=\$(command -v cpulimit)
-else
-    echo "Error: cpulimit not found"
-    exit 1
-fi
+servers=${SERVER_PROCESSES}
+chronyd="/usr/sbin/chronyd"
+cpu_limit_per_process=${CPU_LIMIT_PER_PROCESS}
+cpulimit_available=${CPULIMIT_AVAILABLE}
 
 trap terminate SIGINT SIGTERM
 terminate() {
-  # Kill cpulimit processes first
-  pkill -f "cpulimit.*chronyd-server" 2>/dev/null
+  # Kill cpulimit processes
+  pkill -f "cpulimit.*chronyd-server" &>/dev/null
+  # Kill chronyd processes
   for p in /var/run/chrony/chronyd*.pid; do
-    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
+    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid"
   done
-  wait 2>/dev/null
 }
 
 conf="/etc/chrony/chrony.conf"
-case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
+case "\$(\"\$chronyd\" --version | grep -o -E '[1-9]\.[0-9]+')" in
   1.*|2.*|3.*) echo "chrony version too old"; exit 1;;
   4.0) opts="";;
   4.1) opts="xleave copy";;
   *) opts="xleave copy extfield F323";;
 esac
 mkdir -p /var/run/chrony
-chmod 1777 /var/run/chrony
 
-# Server instances: listen on port 123 (default) for public access with 'allow'
-# They get time from the client instance on port 11123
-# Each server instance is limited to CPU_LIMIT_PERCENT% CPU
+# Start server processes (_chrony) with CPU limits
 for i in \$(seq 1 "\$servers"); do
-  "\$chronyd" "\$@" -n -x \\
-    "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
-    "allow" "cmdport 0" \\
-    "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
-    "pidfile /var/run/chrony/chronyd-server\$i.pid" &
-  
-  # Apply CPU limit to this server instance
-  # Retry loop to ensure PID file exists and limit is applied
-  for retry in {1..10}; do
-    if [ -f "/var/run/chrony/chronyd-server\$i.pid" ]; then
-      pid=\$(cat "/var/run/chrony/chronyd-server\$i.pid" 2>/dev/null)
-      if [[ "\$pid" =~ [0-9]+ ]] && kill -0 "\$pid" 2>/dev/null; then
-        "\$cpulimit" -l "\$CPU_LIMIT_PERCENT" -p "\$pid" -z >/dev/null 2>&1 &
-        echo "Applied CPU limit of \$CPU_LIMIT_PERCENT% to server instance #\$i (PID: \$pid)"
-        break
-      fi
-    fi
-    sleep 0.2
-  done
+  if [ "\$cpulimit_available" = "true" ] && command -v cpulimit &>/dev/null; then
+    # Use cpulimit to wrap the chronyd command for server processes
+    cpulimit -l \$cpu_limit_per_process -f -- \\
+      "\$chronyd" "\$@" -n -x \\
+      "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
+      "allow" "cmdport 0" \\
+      "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
+      "pidfile /var/run/chrony/chronyd-server\$i.pid" &
+  else
+    # Fallback: start without CPU limit if cpulimit is not available
+    "\$chronyd" "\$@" -n -x \\
+      "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
+      "allow" "cmdport 0" \\
+      "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
+      "pidfile /var/run/chrony/chronyd-server\$i.pid" &
+  fi
 done
 
-# Client instance: syncs with external Stratum 1 servers, serves time to server instances on port 11123
-# This instance is internal-only and listens on port 11123 for server instances to connect
-# NO CPU LIMIT for the client instance (acts as interface)
+# Start client process (chrony) WITHOUT CPU limit - acts as interface
 "\$chronyd" "\$@" -n \\
   "include \$conf" \\
   "pidfile /var/run/chrony/chronyd-client.pid" \\
   "bindcmdaddress /var/run/chrony/chronyd-client.sock" \\
   "port 11123" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" &
+
 wait
 EOF
 chmod +x /root/multichronyd.sh
-print_success "Multi-instance script created with CPU limits and made executable."
+print_success "Multi-instance script with CPU limits created and made executable."
 
 # 10. Create the systemd Service File
 print_action "Creating the multichronyd.service systemd file"
 cat << 'EOF' > /etc/systemd/system/multichronyd.service
 [Unit]
-Description=Multi-Instance Chronyd Service Manager (Greencloud - CPU Limited)
+Description=Multi-Instance Chronyd Service Manager (GreenCloud)
 After=network.target
 [Service]
 User=root
@@ -259,7 +234,6 @@ Group=root
 ExecStart=/root/multichronyd.sh
 Restart=always
 RestartSec=10
-Type=simple
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -274,23 +248,7 @@ if ! systemctl is-active --quiet multichronyd; then
 fi
 print_success "Multi-instance chrony service is now active."
 
-# 12. Verify CPU limits are applied
-print_action "Verifying CPU limits are applied"
-sleep 3
-for i in $(seq 1 $CPU_CORES); do
-    if [ -f "/var/run/chrony/chronyd-server$i.pid" ]; then
-        pid=$(cat "/var/run/chrony/chronyd-server$i.pid" 2>/dev/null)
-        if [[ "$pid" =~ [0-9]+ ]]; then
-            if pgrep -f "cpulimit.*$pid" >/dev/null 2>&1; then
-                print_success "CPU limit active for server instance #$i (PID: $pid)"
-            else
-                print_warning "CPU limit process not found for server instance #$i (PID: $pid)"
-            fi
-        fi
-    fi
-done
-
-# 13. Final Verification
+# 12. Final Verification
 print_action "Waiting for initial sync..."
 sleep 60
 print_info "Final Sync Status (chronyc tracking):"
@@ -304,8 +262,6 @@ else
     print_warning "NTP service is not listening on port 123. It may be in client-only mode or blocked."
 fi
 
-print_info "Setup complete!"
-print_info "CPU Limits Summary:"
-print_info "  - chrony (client): No limit"
-print_info "  - _chrony (server instances): 30% CPU limit each (2 instances = 60% total)"
+print_info "GreenCloud setup complete!"
+print_info "Configuration: chrony (client) = unlimited, _chrony (2 server processes) = 30% CPU each (60% total)"
 
