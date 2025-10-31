@@ -169,6 +169,8 @@ case "\$(\"\$chronyd\" --version | grep -o -E '[1-9]\.[0-9]+')" in
   *) opts="xleave copy extfield F323";;
 esac
 mkdir -p /var/run/chrony
+# Server instances: listen on port 123 (default) for public access with 'allow'
+# They get time from the client instance on port 11123
 for i in \$(seq 1 "\$servers"); do
   "\$chronyd" "\$@" -n -x \\
     "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
@@ -176,6 +178,8 @@ for i in \$(seq 1 "\$servers"); do
     "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
     "pidfile /var/run/chrony/chronyd-server\$i.pid" &
 done
+# Client instance: syncs with external Stratum 1 servers, serves time to server instances on port 11123
+# This instance is internal-only and listens on port 11123 for server instances to connect
 "\$chronyd" "\$@" -n \\
   "include \$conf" \\
   "pidfile /var/run/chrony/chronyd-client.pid" \\

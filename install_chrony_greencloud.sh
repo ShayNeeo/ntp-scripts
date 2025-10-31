@@ -172,6 +172,8 @@ esac
 mkdir -p /var/run/chrony
 
 # --- Launch Server Instances with CPU Limit ---
+# Server instances: listen on port 123 (default) for public access with 'allow'
+# They get time from the client instance on port 11123
 for i in \$(seq 1 "\$servers"); do
   \$LIMIT_CMD "\$chronyd" "\$@" -n -x \\
     "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
@@ -181,6 +183,8 @@ for i in \$(seq 1 "\$servers"); do
 done
 
 # --- Launch Client Instance with CPU Limit ---
+# Client instance: syncs with external Stratum 1 servers, serves time to server instances on port 11123
+# This instance is internal-only and listens on port 11123 for server instances to connect
 \$LIMIT_CMD "\$chronyd" "\$@" -n \\
   "include \$conf" \\
   "pidfile /var/run/chrony/chronyd-client.pid" \\
@@ -227,10 +231,31 @@ print_success "Multi-instance chrony service is now active."
 # 11. Final Verification
 print_action "Waiting for initial sync..."
 sleep 60
-print_info "Final Sync Status (chronyc tracking):"
-chronyc -h /var/run/chrony/chronyd-client.sock tracking | tee -a "$LOG_FILE"
-print_info "Active Time Sources (chronyc sources):"
-chronyc -h /var/run/chrony/chronyd-client.sock sources | tee -a "$LOG_FILE"
+
+# Try to connect to chrony instances for status
+# Check which sockets are available
+CLIENT_SOCK="/var/run/chrony/chronyd-client.sock"
+SERVER_SOCK="/var/run/chrony/chronyd-server1.sock"
+
+if [ -S "$CLIENT_SOCK" ]; then
+    print_info "Final Sync Status (chronyc tracking from client):"
+    chronyc -h "$CLIENT_SOCK" tracking 2>&1 | tee -a "$LOG_FILE" || print_warning "Could not connect to client instance"
+    print_info "Active Time Sources (chronyc sources from client):"
+    chronyc -h "$CLIENT_SOCK" sources 2>&1 | tee -a "$LOG_FILE" || print_warning "Could not connect to client instance"
+elif [ -S "$SERVER_SOCK" ]; then
+    print_info "Final Sync Status (chronyc tracking from server instance 1):"
+    chronyc -h "$SERVER_SOCK" tracking 2>&1 | tee -a "$LOG_FILE" || print_warning "Could not connect to server instance"
+    print_info "Active Time Sources (chronyc sources from server instance 1):"
+    chronyc -h "$SERVER_SOCK" sources 2>&1 | tee -a "$LOG_FILE" || print_warning "Could not connect to server instance"
+else
+    print_warning "No chrony control sockets found. Checking if processes are running..."
+    if pgrep -f chronyd > /dev/null; then
+        print_info "Chronyd processes are running. Sockets may take time to initialize."
+        print_info "You can check status later with: chronyc -h /var/run/chrony/chronyd-client.sock tracking"
+    else
+        print_error "Chronyd processes are not running. Check service status: systemctl status multichronyd"
+    fi
+fi
 
 if ss -lupn | grep -q ":123"; then
     print_success "${SERVER_EMOJI} NTP service is up and listening on port 123."
