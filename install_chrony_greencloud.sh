@@ -165,8 +165,8 @@ print_action "Generating the /root/multichronyd.sh script"
 print_info "${LIMIT_EMOJI} Each process will be limited to ${CPU_LIMIT_PER_PROCESS} CPU."
 cat << EOF > /root/multichronyd.sh
 #!/bin/bash
-servers=${CPU_CORES}
-# Find chronyd dynamically - try common locations and PATH
+servers=\${CPU_CORES}
+# Find chronyd dynamically
 if [ -x "/usr/sbin/chronyd" ]; then
     chronyd="/usr/sbin/chronyd"
 elif [ -x "/usr/bin/chronyd" ]; then
@@ -178,17 +178,11 @@ else
     exit 1
 fi
 
-# This is the command wrapper to apply the CPU limit
-LIMIT_CMD="systemd-run --scope -p CPUQuota=${CPU_LIMIT_PER_PROCESS}"
-
 trap terminate SIGINT SIGTERM
 terminate() {
-  # Kill all child processes (the systemd-run scopes)
-  pkill -P \$$
-  # Clean up PIDs
-  for p in /var/run/chrony/chronyd*.pid; do
-    pid=\$(cat "\$p" 2>/dev/null) && [[ "\$pid" =~ [0-9]+ ]] && kill "\$pid" 2>/dev/null
-  done
+  pkill -f "chronyd.*-n -x"
+  pkill -f "chronyd.*include.*conf"
+  sleep 1
 }
 
 conf="/etc/chrony/chrony.conf"
@@ -199,46 +193,23 @@ case "\$("\$chronyd" --version | grep -o -E '[1-9]\.[0-9]+')" in
   *) opts="xleave copy extfield F323";;
 esac
 
-# Ensure directory exists with correct permissions before starting
+# Ensure directory exists
 mkdir -p /var/run/chrony
-if id _chrony &>/dev/null 2>&1; then
-    chown _chrony:_chrony /var/run/chrony
-    chmod 777 /var/run/chrony
-elif id chrony &>/dev/null 2>&1; then
-    chown chrony:chrony /var/run/chrony
-    chmod 777 /var/run/chrony
-else
-    chmod 1777 /var/run/chrony
-    chown root:root /var/run/chrony
-fi
+chmod 1777 /var/run/chrony
 
-# --- Launch Server Instances with CPU Limit ---
-# Server instances: listen on port 123 (default) for public access with 'allow'
-# They get time from the client instance on port 11123
+# --- Launch Server Instances (without systemd-run, use cmdport 0 to disable sockets) ---
 for i in \$(seq 1 "\$servers"); do
-  \$LIMIT_CMD "\$chronyd" "\$@" -n -x \\
+  "\$chronyd" "\$@" -n -x \\
     "server 127.0.0.1 port 11123 minpoll 0 maxpoll 0 \$opts" \\
     "allow" "cmdport 0" \\
-    "bindcmdaddress /var/run/chrony/chronyd-server\$i.sock" \\
     "pidfile /var/run/chrony/chronyd-server\$i.pid" &
 done
 
-# --- Launch Client Instance with CPU Limit ---
-# Client instance: syncs with external Stratum 1 servers, serves time to server instances on port 11123
-# This instance is internal-only and listens on port 11123 for server instances to connect
-\$LIMIT_CMD "\$chronyd" "\$@" -n \\
+# --- Launch Client Instance ---
+"\$chronyd" "\$@" -n \\
   "include \$conf" \\
   "pidfile /var/run/chrony/chronyd-client.pid" \\
-  "bindcmdaddress /var/run/chrony/chronyd-client.sock" \\
-  "port 11123" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" &
-
-# Wait a moment for processes to start
-sleep 2
-
-# Ensure sockets have correct permissions after creation
-for sock in /var/run/chrony/chronyd*.sock; do
-    [ -S "\$sock" ] && chmod 666 "\$sock" 2>/dev/null
-done
+  "port 11123" "bindaddress 127.0.0.1" "sched_priority 1" "allow 127.0.0.1" "cmdport 0" &
 
 wait
 EOF
@@ -259,7 +230,9 @@ ExecStart=/root/multichronyd.sh
 KillMode=process
 Restart=always
 RestartSec=10
-Delegate=yes
+# Apply CPU quota (30% per process across all processes in this service)
+CPUQuota=60%
+MemoryLimit=512M
 [Install]
 WantedBy=multi-user.target
 EOF
