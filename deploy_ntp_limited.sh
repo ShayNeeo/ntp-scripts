@@ -277,7 +277,7 @@ for i in $(seq 1 "$servers"); do
 			"allow 0/0" \
 			"allow ::/0" \
 			"sched_priority 1" \
-			"local stratum 10" \
+			"local stratum 10" &
 done
 
 wait
