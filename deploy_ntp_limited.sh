@@ -268,6 +268,15 @@ esac
 # Each instance limited to 30% CPU
 # Kernel distributes requests across instances
 
+
+# Pre-create PID files with correct permissions to avoid conflicts
+for i in $(seq 1 "$servers"); do
+	pidfile="/var/run/chrony/chronyd-$i.pid"
+	touch "$pidfile"
+	chmod 644 "$pidfile"
+	chown _chrony:_chrony "$pidfile" 2>/dev/null || true
+done
+
 for i in $(seq 1 "$servers"); do
 	echo "Starting NTP instance #$i on port 123 (30% CPU limit)" >&2
 	"$cpulimit" -l "$cpu_limit" -f -- \
@@ -277,7 +286,8 @@ for i in $(seq 1 "$servers"); do
 			"allow 0/0" \
 			"allow ::/0" \
 			"sched_priority 1" \
-			"local stratum 10" &
+			"local stratum 10" \
+			"pidfile /var/run/chrony/chronyd-$i.pid" &
 done
 
 wait
