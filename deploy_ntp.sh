@@ -235,13 +235,6 @@ esac
 # Kernel distributes incoming NTP requests across all instances
 # Each instance independently syncs from upstream Stratum 1 servers
 
-# Pre-create PID files with correct permissions to avoid conflicts
-for i in $(seq 1 "$servers"); do
-	pidfile="/var/run/chrony/chronyd-$i.pid"
-	touch "$pidfile"
-	chmod 644 "$pidfile"
-	chown _chrony:_chrony "$pidfile" 2>/dev/null || true
-done
 
 
 for i in $(seq 1 "$servers"); do
