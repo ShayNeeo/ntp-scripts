@@ -22,6 +22,7 @@ print_success() { echo -e "${GREEN}${CHECK} $1${RESET}" | tee -a "$LOG_FILE"; }
 print_error() { echo -e "${RED}${ERROR} $1${RESET}" | tee -a "$LOG_FILE"; }
 print_action() { echo -e "${CYAN}${SYNC} $1...${RESET}" | tee -a "$LOG_FILE"; }
 print_header() { echo -e "\n${BLUE}════════════════════════════════════════════════════════${RESET}" | tee -a "$LOG_FILE"; echo -e "${BLUE}$1${RESET}" | tee -a "$LOG_FILE"; echo -e "${BLUE}════════════════════════════════════════════════════════${RESET}\n" | tee -a "$LOG_FILE"; }
+print_warning() { echo -e "${YELLOW}${INFO} $1${RESET}" | tee -a "$LOG_FILE"; }
 
 # Stratum 1 NTP Servers
 STRATUM_1_SERVERS=(
@@ -172,18 +173,8 @@ print_success "Chrony configuration created"
 print_header "DEPLOYING MULTICHRONY - SO_REUSEPORT (${TOTAL_CORES} instances)"
 print_action "Creating /root/multichronyd.sh launcher"
 
-# Fix permissions for /var/run/chrony
-mkdir -p /var/run/chrony
-chmod 770 /var/run/chrony
-# Find the chronyd user and set ownership - improved regex
-CHRONY_USER=$(getent passwd 2>/dev/null | grep -E '^(_?chrony(d)?):' | cut -d: -f1 | head -1 || true)
-if [ -n "$CHRONY_USER" ]; then
-    chown "$CHRONY_USER:$CHRONY_USER" /var/run/chrony
-    print_info "Set /var/run/chrony ownership to $CHRONY_USER"
-else
-    chown root:root /var/run/chrony
-    print_info "Using root ownership for /var/run/chrony (chronyd user not found)"
-fi
+# Note: /var/run/chrony ownership is now handled by systemd ExecStartPre
+# Systemd runs: mkdir, chmod, and chown chronyd:chronyd BEFORE launching the script
 
 cat > /root/multichronyd.sh << 'LAUNCHER' || { print_error "Failed to create launcher script"; exit 1; }
 #!/bin/bash
@@ -226,9 +217,6 @@ case "$("$chronyd" --version 2>/dev/null | grep -o -E '[1-9]\.[0-9]' | head -1)"
 	*)	opts="xleave copy extfield F323";;
 esac
 
-mkdir -p /var/run/chrony
-chmod 770 /var/run/chrony
-
 # SO_REUSEPORT: All instances listen on same port 123
 # Kernel distributes incoming NTP requests across all instances
 # Each instance independently syncs from upstream Stratum 1 servers
@@ -270,6 +258,8 @@ User=root
 Group=root
 Type=simple
 ExecStartPre=/bin/mkdir -p /var/run/chrony
+ExecStartPre=/bin/chmod 755 /var/run/chrony
+ExecStartPre=/bin/chown chronyd:chronyd /var/run/chrony
 ExecStart=/root/multichronyd.sh
 Restart=on-failure
 RestartSec=10

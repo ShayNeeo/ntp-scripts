@@ -200,16 +200,6 @@ print_action "Creating /root/multichronyd.sh launcher (with cpulimit)"
 
 # Fix permissions for /var/run/chrony
 mkdir -p /var/run/chrony
-chmod 770 /var/run/chrony
-# Find the chronyd user and set ownership - improved regex
-CHRONY_USER=$(getent passwd 2>/dev/null | grep -E '^(_?chrony(d)?):' | cut -d: -f1 | head -1 || true)
-if [ -n "$CHRONY_USER" ]; then
-    chown "$CHRONY_USER:$CHRONY_USER" /var/run/chrony
-    print_info "Set /var/run/chrony ownership to $CHRONY_USER"
-else
-    chown root:root /var/run/chrony
-    print_info "Using root ownership for /var/run/chrony (chronyd user not found)"
-fi
 
 cat > /root/multichronyd.sh << 'LAUNCHER' || { print_error "Failed to create launcher script"; exit 1; }
 #!/bin/bash
@@ -260,9 +250,6 @@ case "$("$chronyd" --version 2>/dev/null | grep -o -E '[1-9]\.[0-9]' | head -1)"
 	*)	opts="xleave copy extfield F323";;
 esac
 
-mkdir -p /var/run/chrony
-chmod 770 /var/run/chrony
-
 # SO_REUSEPORT with CPU limits: All instances listen on port 123
 # Each instance limited to 30% CPU
 # Kernel distributes requests across instances
@@ -306,6 +293,8 @@ User=root
 Group=root
 Type=simple
 ExecStartPre=/bin/mkdir -p /var/run/chrony
+ExecStartPre=/bin/chmod 755 /var/run/chrony
+ExecStartPre=/bin/chown chronyd:chronyd /var/run/chrony
 ExecStart=/root/multichronyd.sh
 Restart=on-failure
 RestartSec=10
