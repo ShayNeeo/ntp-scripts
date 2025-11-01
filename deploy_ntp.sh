@@ -107,6 +107,20 @@ fi
 CHRONYD=$(command -v chronyd) || { print_error "chronyd not found in PATH"; exit 1; }
 print_info "Using chronyd: $CHRONYD"
 
+
+# Detect chrony user (try _chrony first, then chronyd, then fallback to root)
+CHRONY_USER=""
+for user in _chrony chronyd; do
+    if getent passwd "$user" &>/dev/null; then
+        CHRONY_USER="$user"
+        break
+    fi
+done
+if [[ -z "$CHRONY_USER" ]]; then
+    print_warning "Chrony user not found, will run as root (not recommended)"
+    CHRONY_USER="root"
+fi
+print_info "Using chrony user: $CHRONY_USER"
 # 6. Firewall setup
 print_header "FIREWALL CONFIGURATION ${FIRE}"
 if systemctl is-active --quiet firewalld 2>/dev/null; then
@@ -245,7 +259,7 @@ print_success "Launcher script created"
 
 # 9. Create systemd service
 print_action "Creating systemd service"
-cat > /etc/systemd/system/multichronyd.service << 'SERVICE' || { print_error "Failed to create systemd service"; exit 1; }
+cat > /etc/systemd/system/multichronyd.service << SERVICE || { print_error "Failed to create systemd service"; exit 1; }
 [Unit]
 Description=Multi-Instance Chronyd (SO_REUSEPORT) - Public NTP Pool
 Documentation=https://chrony.tuxfamily.org/
@@ -259,7 +273,7 @@ Group=root
 Type=simple
 ExecStartPre=/bin/mkdir -p /var/run/chrony
 ExecStartPre=/bin/chmod 755 /var/run/chrony
-ExecStartPre=/bin/chown chronyd:chronyd /var/run/chrony
+ExecStartPre=/bin/chown ${CHRONY_USER}:${CHRONY_USER} /var/run/chrony
 ExecStart=/root/multichronyd.sh
 Restart=on-failure
 RestartSec=10
