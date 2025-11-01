@@ -187,23 +187,39 @@ fi
 
 cat > /root/multichronyd.sh << 'LAUNCHER' || { print_error "Failed to create launcher script"; exit 1; }
 #!/bin/bash
+set -euo pipefail
+
+# Startup delay to allow network to be ready
+sleep 2
 
 servers=$(nproc)
 chronyd="CHRONYD_PATH"
 conf="/etc/chrony/chrony.conf"
 
-trap terminate SIGINT SIGTERM
+trap terminate SIGINT SIGTERM EXIT
 terminate()
 {
 	for p in /var/run/chrony/chronyd*.pid; do
 		pid=$(cat "$p" 2>/dev/null || true)
 		[[ "$pid" =~ [0-9]+ ]] && kill "$pid" 2>/dev/null || true
 	done
+	exit 0
 }
+
+# Validate prerequisites
+if [ ! -f "$conf" ]; then
+	echo "ERROR: Chrony configuration not found: $conf" >&2
+	exit 1
+fi
+
+if [ ! -x "$chronyd" ]; then
+	echo "ERROR: chronyd not executable: $chronyd" >&2
+	exit 1
+fi
 
 case "$("$chronyd" --version 2>/dev/null | grep -o -E '[1-9]\.[0-9]' | head -1)" in
 	1.*|2.*|3.*)
-		echo "chrony version too old (needs 4.0+)"
+		echo "ERROR: chrony version too old (needs 4.0+)" >&2
 		exit 1;;
 	4.0)	opts="";;
 	4.1)	opts="xleave copy";;
@@ -211,6 +227,7 @@ case "$("$chronyd" --version 2>/dev/null | grep -o -E '[1-9]\.[0-9]' | head -1)"
 esac
 
 mkdir -p /var/run/chrony
+chmod 770 /var/run/chrony
 
 # SO_REUSEPORT: All instances listen on same port 123
 # Kernel distributes incoming NTP requests across all instances
@@ -243,22 +260,27 @@ print_action "Creating systemd service"
 cat > /etc/systemd/system/multichronyd.service << 'SERVICE' || { print_error "Failed to create systemd service"; exit 1; }
 [Unit]
 Description=Multi-Instance Chronyd (SO_REUSEPORT) - Public NTP Pool
+Documentation=https://chrony.tuxfamily.org/
 After=network-online.target
 Wants=network-online.target
-StartLimitInterval=300s
-StartLimitBurst=5
+Before=systemd-user-sessions.service
 
 [Service]
 User=root
 Group=root
 Type=simple
+ExecStartPre=/bin/mkdir -p /var/run/chrony
 ExecStart=/root/multichronyd.sh
-ExecStartPost=/usr/bin/sleep 5
-Restart=always
+Restart=on-failure
 RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+TimeoutStartSec=60
+TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal
-TimeoutStartSec=120
+StandardInput=null
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 [Install]
 WantedBy=multi-user.target
@@ -272,7 +294,7 @@ systemctl daemon-reload
 systemctl enable multichronyd.service
 systemctl start multichronyd.service
 
-sleep 3
+sleep 2
 if systemctl is-active --quiet multichronyd.service; then
     print_success "Multichronyd service running"
 else
@@ -283,40 +305,14 @@ fi
 
 # 11. Verify
 print_header "VERIFICATION & STATUS"
-print_action "Waiting 30 seconds for chronyd to initialize and bind ports..."
-sleep 30
-
-# Health check with retry logic
-print_action "Performing health checks (with retry logic)"
-MAX_RETRIES=5
-RETRY=0
-CHRONYC_OK=false
-
-while [ $RETRY -lt $MAX_RETRIES ]; do
-    print_info "Health check attempt $((RETRY + 1))/$MAX_RETRIES..."
-    
-    if chronyc sources 2>/dev/null | tee -a "$LOG_FILE" | grep -q "^210 Number"; then
-        print_success "chronyc responding - active time sources found"
-        CHRONYC_OK=true
-        break
-    else
-        RETRY=$((RETRY + 1))
-        if [ $RETRY -lt $MAX_RETRIES ]; then
-            print_warning "chronyc not ready, waiting 5 seconds..."
-            sleep 5
-        fi
-    fi
-done
-
-if [ "$CHRONYC_OK" = false ]; then
-    print_warning "chronyc still not responding after retries (may still be syncing)"
-fi
+print_action "Waiting 10 seconds for time sync..."
+sleep 10
 
 print_info "Checking first instance status:"
-chronyc tracking 2>/dev/null | tee -a "$LOG_FILE" || print_warning "chronyc not yet responding (syncing...)"
+chronyc sources 2>/dev/null | tee -a "$LOG_FILE" || print_warning "chronyc not yet responding (syncing...)"
 
 print_info "Active time sources:"
-chronyc sources 2>/dev/null | tee -a "$LOG_FILE" || print_warning "chronyc not yet responding (syncing...)"
+chronyc tracking 2>/dev/null | tee -a "$LOG_FILE" || print_warning "chronyc not yet responding (syncing...)"
 
 print_info "Number of listening NTP instances:"
 INSTANCE_COUNT=$(ss -lupn 2>/dev/null | grep -c ":123 " || echo "0")
@@ -325,8 +321,7 @@ echo "$INSTANCE_COUNT"
 if ss -lupn 2>/dev/null | grep -q ":123 "; then
     print_success "${SERVER} NTP Server ACTIVE on port 123/UDP (${TOTAL_CORES} instances)"
 else
-    print_error "Port 123 not listening - service may need more time to start"
-    print_info "Try checking again in 30 seconds: chronyc sources"
+    print_error "Port 123 not listening"
 fi
 
 # 12. Summary
