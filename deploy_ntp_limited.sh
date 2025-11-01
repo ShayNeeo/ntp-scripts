@@ -27,18 +27,8 @@ print_header() { echo -e "\n${BLUE}═══════════════
 # Stratum 1 NTP Servers
 STRATUM_1_SERVERS=(
     "time.google.com"
-    "time.facebook.com"
     "time.apple.com"
-    "ntp.se"
-    "ntp.nict.jp"
     "time.nplindia.org"
-    "time.nist.gov"
-    "tick.usask.ca"
-    "ptbtime1.ptb.de"
-    "clock.fmt.he.net"
-    "ntp1.leontp.com"
-    "vega.cbk.poznan.pl"
-    "ntp.bsn.go.id"
     "time1.nimt.or.th"
     "time.hko.hk"
 )
@@ -286,16 +276,20 @@ cat > /etc/systemd/system/multichronyd.service << 'SERVICE' || { print_error "Fa
 Description=Multi-Instance Chronyd (SO_REUSEPORT CPU Limited) - Public NTP Pool
 After=network-online.target
 Wants=network-online.target
+StartLimitInterval=300s
+StartLimitBurst=5
 
 [Service]
 User=root
 Group=root
 Type=simple
 ExecStart=/root/multichronyd.sh
+ExecStartPost=/usr/bin/sleep 5
 Restart=always
-RestartSec=5
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
+TimeoutStartSec=120
 
 [Install]
 WantedBy=multi-user.target
@@ -309,7 +303,7 @@ systemctl daemon-reload
 systemctl enable multichronyd.service
 systemctl start multichronyd.service
 
-sleep 2
+sleep 3
 if systemctl is-active --quiet multichronyd.service; then
     print_success "Multichronyd service running"
 else
@@ -320,8 +314,34 @@ fi
 
 # 11. Verify
 print_header "VERIFICATION & STATUS"
-print_action "Waiting 10 seconds for time sync..."
-sleep 10
+print_action "Waiting 30 seconds for chronyd to initialize and bind ports..."
+sleep 30
+
+# Health check with retry logic
+print_action "Performing health checks (with retry logic)"
+MAX_RETRIES=5
+RETRY=0
+CHRONYC_OK=false
+
+while [ $RETRY -lt $MAX_RETRIES ]; do
+    print_info "Health check attempt $((RETRY + 1))/$MAX_RETRIES..."
+    
+    if chronyc sources 2>/dev/null | tee -a "$LOG_FILE" | grep -q "^210 Number"; then
+        print_success "chronyc responding - active time sources found"
+        CHRONYC_OK=true
+        break
+    else
+        RETRY=$((RETRY + 1))
+        if [ $RETRY -lt $MAX_RETRIES ]; then
+            print_warning "chronyc not ready, waiting 5 seconds..."
+            sleep 5
+        fi
+    fi
+done
+
+if [ "$CHRONYC_OK" = false ]; then
+    print_warning "chronyc still not responding after retries (may still be syncing)"
+fi
 
 print_info "Checking first instance status:"
 chronyc tracking 2>/dev/null | tee -a "$LOG_FILE" || print_warning "chronyc not yet responding (syncing...)"
@@ -336,7 +356,20 @@ echo "$INSTANCE_COUNT"
 if ss -lupn 2>/dev/null | grep -q ":123 "; then
     print_success "${SERVER} NTP Server ACTIVE on port 123/UDP (${TOTAL_CORES} instances, CPU limited)"
 else
-    print_error "Port 123 not listening"
+    print_error "Port 123 not listening - service may need more time to start"
+    print_info "Try checking again in 30 seconds: chronyc sources"
+fi
+
+# Check CPU limiting is active
+print_header "CPU LIMITING VERIFICATION"
+print_action "Checking cpulimit process(es)"
+CPULIMIT_COUNT=$(pgrep -f "cpulimit.*chronyd" 2>/dev/null | wc -l || echo "0")
+if [ "$CPULIMIT_COUNT" -gt 0 ]; then
+    print_success "Found $CPULIMIT_COUNT cpulimit process(es) - CPU limiting is ACTIVE"
+    print_info "Expected total CPU budget: ~${TOTAL_CPU_LIMIT}%"
+else
+    print_warning "No cpulimit processes yet (may still starting up)"
+    print_info "Check again in 30 seconds: pgrep -f 'cpulimit.*chronyd'"
 fi
 
 # 12. Summary
