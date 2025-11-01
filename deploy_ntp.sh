@@ -244,8 +244,6 @@ for i in $(seq 1 "$servers"); do
 		"allow ::/0" \
 		"sched_priority 1" \
 		"local stratum 10" \
-		"cmdport 0" \
-		"pidfile /var/run/chrony/chronyd-$i.pid" &
 done
 
 wait
