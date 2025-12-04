@@ -27,10 +27,11 @@ print_warning() { echo -e "${YELLOW}${INFO} $1${RESET}" | tee -a "$LOG_FILE"; }
 # Stratum 1 NTP Servers
 STRATUM_1_SERVERS=(
     "time.apple.com"
-    "ntp.nict.jp"
     "time.nplindia.org"
     "time1.nimt.or.th"
     "time.hko.hk"
+	"stdtime.gov.hk"
+	"ntpmon.dcs1.biz"
 )
 
 echo "=== Deployment started $(date) ===" >> "$LOG_FILE"
