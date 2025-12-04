@@ -26,7 +26,6 @@ print_warning() { echo -e "${YELLOW}${INFO} $1${RESET}" | tee -a "$LOG_FILE"; }
 
 # Stratum 1 NTP Servers
 STRATUM_1_SERVERS=(
-    "time.google.com"
     "time.apple.com"
     "ntp.nict.jp"
     "time.nplindia.org"
