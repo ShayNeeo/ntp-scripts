@@ -32,6 +32,7 @@ STRATUM_1_SERVERS=(
     "time.hko.hk"
 	"stdtime.gov.hk"
 	"ntpmon.dcs1.biz"
+	"ntp.ubaya.ac.id"
 )
 
 # CPU Limit Configuration
