@@ -30,6 +30,8 @@ STRATUM_1_SERVERS=(
     "time.nplindia.org"
     "time1.nimt.or.th"
     "time.hko.hk"
+	"stdtime.gov.hk"
+	"ntpmon.dcs1.biz"
 )
 
 # CPU Limit Configuration
