@@ -33,6 +33,7 @@ STRATUM_1_SERVERS=(
 	"stdtime.gov.hk"
 	"ntpmon.dcs1.biz"
 	"ntp.ubaya.ac.id"
+	"ntp.gwadar.cn"
 )
 
 echo "=== Deployment started $(date) ===" >> "$LOG_FILE"
