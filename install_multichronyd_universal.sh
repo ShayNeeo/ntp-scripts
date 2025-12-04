@@ -19,8 +19,8 @@ print_action() { echo -e "${CYAN}${SYNC_EMOJI} $1...${RESET}" | tee -a "$LOG_FIL
 # Curated from all provided sources for maximum reliability and geographic performance.
 STRATUM_1_SERVERS=(
     # --- Top Tier Global Anycast Providers ---
-    "time.google.com"
-    "time.facebook.com"
+#    "time.google.com"        #Leap second smearing
+#    "time.facebook.com"      #Leap second smearing
     "time.apple.com"
     "ntp.se"                  # Netnod (Anycast)
 
