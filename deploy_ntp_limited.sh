@@ -26,7 +26,6 @@ print_header() { echo -e "\n${BLUE}═══════════════
 
 # Stratum 1 NTP Servers
 STRATUM_1_SERVERS=(
-    "time.google.com"
     "time.apple.com"
     "time.nplindia.org"
     "time1.nimt.or.th"
